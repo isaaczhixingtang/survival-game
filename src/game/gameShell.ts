@@ -416,15 +416,6 @@ export const gameShellHtml = `<div id="canvas-container"></div>
                         <button id="btn-ingame-cheats-enabled" class="btn btn-secondary" style="flex: 1; padding: 10px; font-size: 0.9rem;">Enabled</button>
                     </div>
                 </div>
-                
-                <!-- Physics Enable/Disable Toggle -->
-                <div style="display: flex; flex-direction: column;">
-                    <label style="display: block; font-family: 'Orbitron', sans-serif; font-size: 0.85rem; color: var(--white); margin-bottom: 8px; letter-spacing: 0.5px;">Physics (Blocks Fall/Bend)</label>
-                    <div style="display: flex; gap: 15px;">
-                        <button id="btn-physics-disabled" class="btn btn-secondary" style="flex: 1; padding: 10px; font-size: 0.9rem;">Off</button>
-                        <button id="btn-physics-enabled" class="btn btn-secondary" style="flex: 1; padding: 10px; font-size: 0.9rem;">On</button>
-                    </div>
-                </div>
             </div>
             
             <!-- Action Buttons -->

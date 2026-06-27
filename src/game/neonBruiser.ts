@@ -463,21 +463,6 @@ export function initNeonBruiser(): Cleanup {
             });
         }
 
-        const btnPhysicsDisabled = document.getElementById('btn-physics-disabled');
-        const btnPhysicsEnabled = document.getElementById('btn-physics-enabled');
-        if (btnPhysicsDisabled) {
-            btnPhysicsDisabled.addEventListener('click', () => {
-                structuralPhysicsEnabled = false;
-                updatePhysicsUIState();
-            });
-        }
-        if (btnPhysicsEnabled) {
-            btnPhysicsEnabled.addEventListener('click', () => {
-                structuralPhysicsEnabled = true;
-                updatePhysicsUIState();
-            });
-        }
-
         const btnShowNewGame = document.getElementById('btn-show-new-game');
         const btnCancelNewGame = document.getElementById('btn-cancel-new-game');
         const btnStartNewGame = document.getElementById('btn-start-new-game');
@@ -566,7 +551,6 @@ export function initNeonBruiser(): Cleanup {
                 
                 // Sync UI controls with current settings
                 updateCheatsUIState();
-                updatePhysicsUIState();
             });
         }
 
@@ -677,18 +661,6 @@ export function initNeonBruiser(): Cleanup {
                         kz: 0
                     });
                 }
-            }
-        }
-
-        function updatePhysicsUIState() {
-            const btnDisabled = document.getElementById('btn-physics-disabled');
-            const btnEnabled = document.getElementById('btn-physics-enabled');
-            if (structuralPhysicsEnabled) {
-                if (btnDisabled) { btnDisabled.classList.remove('active'); btnDisabled.style.borderColor = 'rgba(255,255,255,0.1)'; btnDisabled.style.background = 'rgba(255,255,255,0.02)'; btnDisabled.style.color = '#8a90a0'; }
-                if (btnEnabled) { btnEnabled.classList.add('active'); btnEnabled.style.borderColor = 'var(--cyan)'; btnEnabled.style.background = 'rgba(0, 240, 255, 0.1)'; btnEnabled.style.color = 'var(--cyan)'; }
-            } else {
-                if (btnDisabled) { btnDisabled.classList.add('active'); btnDisabled.style.borderColor = 'var(--cyan)'; btnDisabled.style.background = 'rgba(0, 240, 255, 0.1)'; btnDisabled.style.color = 'var(--cyan)'; }
-                if (btnEnabled) { btnEnabled.classList.remove('active'); btnEnabled.style.borderColor = 'rgba(255,255,255,0.1)'; btnEnabled.style.background = 'rgba(255,255,255,0.02)'; btnEnabled.style.color = '#8a90a0'; }
             }
         }
 
@@ -1293,8 +1265,6 @@ export function initNeonBruiser(): Cleanup {
         let isRodBaited = false;
         let activeBobber = null;
         let flyingFish = null;
-        let fallingBlocks = [];
-        let debrisParticles = [];
 
         // Environment Details
         const grassClumps = [];
@@ -2170,7 +2140,6 @@ export function initNeonBruiser(): Cleanup {
                         sendChatMessage();
                     }
                 });
-                checkStructuralPhysics();
             }
         }
 
@@ -5878,7 +5847,6 @@ export function initNeonBruiser(): Cleanup {
                 mode: currentGameMode,
                 cameraView: cameraView,
                 cheatsEnabled: cheatsEnabled,
-                structuralPhysicsEnabled: structuralPhysicsEnabled,
                 date: new Date().toLocaleString(),
                 
                 myHealth: myHealth,
@@ -6987,8 +6955,6 @@ export function initNeonBruiser(): Cleanup {
                 updateFurnaces(delta);
                 updateBlockCracksDecay(delta);
                 updateFishing(delta);
-                updateFallingBlocks(delta);
-                updateDebrisParticles(delta);
             }
 
             if (isConnected) {
@@ -9216,226 +9182,6 @@ export function initNeonBruiser(): Cleanup {
             isRodBaited = false;
         }
 
-        function doObjectsTouch(a, b) {
-            const aWidthX = (a.type === 'crafting_bench') ? 1.6 : 0.9;
-            const aWidthZ = (a.type === 'crafting_bench') ? 0.7 : 0.9;
-            const aHeight = (a.type === 'crafting_bench') ? 1.0 : (a.type === 'door' ? 1.8 : (a.type === 'stone_slab' ? 0.45 : 0.9));
-            
-            const bWidthX = (b.type === 'crafting_bench') ? 1.6 : 0.9;
-            const bWidthZ = (b.type === 'crafting_bench') ? 0.7 : 0.9;
-            const bHeight = (b.type === 'crafting_bench') ? 1.0 : (b.type === 'door' ? 1.8 : (b.type === 'stone_slab' ? 0.45 : 0.9));
-
-            const aMinX = a.pos.x - aWidthX / 2 - 0.05;
-            const aMaxX = a.pos.x + aWidthX / 2 + 0.05;
-            const aMinZ = a.pos.z - aWidthZ / 2 - 0.05;
-            const aMaxZ = a.pos.z + aWidthZ / 2 + 0.05;
-            const aMinY = a.pos.y - 0.05;
-            const aMaxY = a.pos.y + aHeight + 0.05;
-
-            const bMinX = b.pos.x - bWidthX / 2;
-            const bMaxX = b.pos.x + bWidthX / 2;
-            const bMinZ = b.pos.z - bWidthZ / 2;
-            const bMaxZ = b.pos.z + bWidthZ / 2;
-            const bMinY = b.pos.y;
-            const bMaxY = b.pos.y + bHeight;
-
-            return (aMinX <= bMaxX && aMaxX >= bMinX) &&
-                   (aMinZ <= bMaxZ && aMaxZ >= bMinZ) &&
-                   (aMinY <= bMaxY && aMaxY >= bMinY);
-        }
-
-        function isObjectOnGround(obj) {
-            const terrainH = getTerrainHeight(obj.pos.x, obj.pos.z, false);
-            return obj.pos.y <= terrainH + 0.15;
-        }
-
-        function checkStructuralPhysics() {
-            if (!structuralPhysicsEnabled) {
-                placedObjects.forEach(obj => {
-                    obj.mesh.position.copy(obj.pos);
-                    obj.mesh.rotation.set(0, obj.initialRotationY || 0, 0);
-                });
-                return;
-            }
-
-            placedObjects.forEach(obj => {
-                obj.supported = false;
-                obj.distanceFromGround = Infinity;
-            });
-
-            const queue = [];
-            placedObjects.forEach(obj => {
-                if (isObjectOnGround(obj)) {
-                    obj.supported = true;
-                    obj.distanceFromGround = 0;
-                    queue.push(obj);
-                }
-            });
-
-            while (queue.length > 0) {
-                const curr = queue.shift();
-                placedObjects.forEach(neighbor => {
-                    if (neighbor === curr) return;
-                    if (doObjectsTouch(curr, neighbor)) {
-                        const newDist = curr.distanceFromGround + 1;
-                        if (!neighbor.supported || newDist < neighbor.distanceFromGround) {
-                            neighbor.supported = true;
-                            neighbor.distanceFromGround = newDist;
-                            queue.push(neighbor);
-                        }
-                    }
-                });
-            }
-
-            const unsupported = [];
-            for (let i = placedObjects.length - 1; i >= 0; i--) {
-                const obj = placedObjects[i];
-                if (!obj.supported) {
-                    placedObjects.splice(i, 1);
-                    unsupported.push(obj);
-                }
-            }
-
-            unsupported.forEach(obj => {
-                fallingBlocks.push({
-                    mesh: obj.mesh,
-                    pos: obj.pos.clone(),
-                    velY: 0,
-                    type: obj.type,
-                    originalObj: obj
-                });
-            });
-
-            placedObjects.forEach(obj => {
-                if (obj.supported) {
-                    const sagFactor = Math.min(0.12, obj.distanceFromGround * 0.015);
-                    obj.mesh.position.copy(obj.pos);
-                    obj.mesh.position.y -= sagFactor;
-                    obj.mesh.rotation.x = Math.sin(obj.pos.z) * sagFactor * 0.4;
-                    obj.mesh.rotation.z = Math.cos(obj.pos.x) * sagFactor * 0.4;
-                }
-            });
-        }
-
-        function spawnDebrisParticles(position, blockType, count = 10) {
-            let color = 0x8b5a2b;
-            if (blockType.includes('stone') || blockType.includes('furnace')) {
-                color = 0x777777;
-            } else if (blockType.includes('wool') || blockType.includes('bed')) {
-                color = 0xdddddd;
-            } else if (blockType.includes('planks') || blockType.includes('crafting') || blockType.includes('chest')) {
-                color = 0xa0522d;
-            }
-            
-            for (let i = 0; i < count; i++) {
-                const size = 0.05 + Math.random() * 0.08;
-                const geo = new THREE.BoxGeometry(size, size, size);
-                const mat = new THREE.MeshStandardMaterial({
-                    color: color,
-                    roughness: 0.9,
-                    transparent: true,
-                    opacity: 0.9
-                });
-                const mesh = new THREE.Mesh(geo, mat);
-                mesh.position.copy(position);
-                mesh.position.x += (Math.random() - 0.5) * 0.5;
-                mesh.position.y += Math.random() * 0.5;
-                mesh.position.z += (Math.random() - 0.5) * 0.5;
-                
-                scene.add(mesh);
-                
-                debrisParticles.push({
-                    mesh: mesh,
-                    mat: mat,
-                    velY: (Math.random() - 0.2) * 2.0,
-                    velX: (Math.random() - 0.5) * 1.5,
-                    velZ: (Math.random() - 0.5) * 1.5,
-                    life: 0.4 + Math.random() * 0.4
-                });
-            }
-        }
-
-        function updateDebrisParticles(delta) {
-            for (let i = debrisParticles.length - 1; i >= 0; i--) {
-                const p = debrisParticles[i];
-                p.life -= delta;
-                if (p.life <= 0) {
-                    scene.remove(p.mesh);
-                    debrisParticles.splice(i, 1);
-                } else {
-                    p.velY -= 9.8 * delta;
-                    p.mesh.position.y += p.velY * delta;
-                    p.mesh.position.x += p.velX * delta;
-                    p.mesh.position.z += p.velZ * delta;
-                    p.mat.opacity = p.life / 0.8;
-                }
-            }
-        }
-
-        function updateFallingBlocks(delta) {
-            for (let i = fallingBlocks.length - 1; i >= 0; i--) {
-                const fb = fallingBlocks[i];
-                fb.velY -= 9.8 * delta;
-                fb.pos.y += fb.velY * delta;
-                fb.mesh.position.copy(fb.pos);
-                
-                fb.mesh.rotation.x += delta * 2.0;
-                fb.mesh.rotation.z += delta * 1.5;
-
-                const terrainH = getTerrainHeight(fb.pos.x, fb.pos.z, false);
-                
-                if (fb.pos.y <= terrainH) {
-                    fb.pos.y = terrainH;
-                    fb.originalObj.pos.copy(fb.pos);
-                    fb.originalObj.mesh.position.copy(fb.pos);
-                    fb.originalObj.mesh.rotation.set(0, fb.originalObj.initialRotationY || 0, 0);
-                    placedObjects.push(fb.originalObj);
-                    
-                    AudioSynth.playHit(fb.pos);
-                    fallingBlocks.splice(i, 1);
-                    checkStructuralPhysics();
-                    continue;
-                }
-
-                let hitBlock = false;
-                for (let j = 0; j < placedObjects.length; j++) {
-                    const other = placedObjects[j];
-                    const otherWidthX = (other.type === 'crafting_bench') ? 1.6 : 0.9;
-                    const otherWidthZ = (other.type === 'crafting_bench') ? 0.7 : 0.9;
-                    const otherHeight = (other.type === 'crafting_bench') ? 1.0 : (other.type === 'door' ? 1.8 : (other.type === 'stone_slab' ? 0.45 : 0.9));
-                    
-                    const minX = other.pos.x - otherWidthX / 2;
-                    const maxX = other.pos.x + otherWidthX / 2;
-                    const minZ = other.pos.z - otherWidthZ / 2;
-                    const maxZ = other.pos.z + otherWidthZ / 2;
-                    
-                    if (fb.pos.x >= minX && fb.pos.x <= maxX && fb.pos.z >= minZ && fb.pos.z <= maxZ) {
-                        if (fb.pos.y <= other.pos.y + otherHeight && fb.pos.y >= other.pos.y) {
-                            fb.pos.y = other.pos.y + otherHeight;
-                            fb.originalObj.pos.copy(fb.pos);
-                            fb.originalObj.mesh.position.copy(fb.pos);
-                            fb.originalObj.mesh.rotation.set(0, fb.originalObj.initialRotationY || 0, 0);
-                            placedObjects.push(fb.originalObj);
-                            
-                            AudioSynth.playHit(fb.pos);
-                            fallingBlocks.splice(i, 1);
-                            checkStructuralPhysics();
-                            hitBlock = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (hitBlock) continue;
-
-                if (fb.pos.y < -30) {
-                    spawnDebrisParticles(fb.pos, fb.type, 15);
-                    scene.remove(fb.mesh);
-                    fallingBlocks.splice(i, 1);
-                }
-            }
-        }
-
         function updateFishing(delta) {
             if (activeBobber) {
                 if (activeBobber.state === 'flying') {
@@ -10814,8 +10560,6 @@ export function initNeonBruiser(): Cleanup {
             if (index !== -1) {
                 placedObjects.splice(index, 1);
             }
-            spawnDebrisParticles(obj.pos, obj.type, 15);
-            checkStructuralPhysics();
             spawnDroppedFood(obj.type, obj.pos.clone().add(new THREE.Vector3(0, 0.3, 0)));
             if (isConnected) {
                 sendNetworkMessage({
@@ -10838,8 +10582,6 @@ export function initNeonBruiser(): Cleanup {
                 const obj = placedObjects[index];
                 scene.remove(obj.mesh);
                 placedObjects.splice(index, 1);
-                spawnDebrisParticles(obj.pos, obj.type, 15);
-                checkStructuralPhysics();
             }
         }
 
@@ -11229,14 +10971,6 @@ export function initNeonBruiser(): Cleanup {
                 scene.remove(obj.mesh);
             });
             placedObjects.length = 0;
-            fallingBlocks.forEach(fb => {
-                scene.remove(fb.mesh);
-            });
-            fallingBlocks.length = 0;
-            debrisParticles.forEach(dp => {
-                scene.remove(dp.mesh);
-            });
-            debrisParticles.length = 0;
             obtainedItems.clear();
             obtainedItems.add('wooden_axe');
             obtainedItems.add('crafting_bench');
