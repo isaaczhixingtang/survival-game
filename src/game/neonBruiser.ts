@@ -449,7 +449,300 @@ export function initNeonBruiser(): Cleanup {
             stopCustomizePreview();
             elCustomizeScreen.style.display = 'none';
             elLobby.style.display = 'flex';
+            createPlayerMesh();
         });
+
+        // Survivalism Screens and Event Listeners
+        const btnEnterGame = document.getElementById('btn-enter-game');
+        if (btnEnterGame) {
+            btnEnterGame.addEventListener('click', () => {
+                const startScreen = document.getElementById('start-screen');
+                if (startScreen) startScreen.style.display = 'none';
+                if (elLobby) elLobby.style.display = 'flex';
+                renderSavesList();
+            });
+        }
+
+        const btnPhysicsDisabled = document.getElementById('btn-physics-disabled');
+        const btnPhysicsEnabled = document.getElementById('btn-physics-enabled');
+        if (btnPhysicsDisabled) {
+            btnPhysicsDisabled.addEventListener('click', () => {
+                structuralPhysicsEnabled = false;
+                updatePhysicsUIState();
+            });
+        }
+        if (btnPhysicsEnabled) {
+            btnPhysicsEnabled.addEventListener('click', () => {
+                structuralPhysicsEnabled = true;
+                updatePhysicsUIState();
+            });
+        }
+
+        const btnShowNewGame = document.getElementById('btn-show-new-game');
+        const btnCancelNewGame = document.getElementById('btn-cancel-new-game');
+        const btnStartNewGame = document.getElementById('btn-start-new-game');
+        const btnNewModeSurvival = document.getElementById('btn-mode-survival');
+        const btnNewModeFreedom = document.getElementById('btn-mode-freedom');
+        const btnNewCheatsDisabled = document.getElementById('btn-cheats-disabled');
+        const btnNewCheatsEnabled = document.getElementById('btn-cheats-enabled');
+
+        if (btnShowNewGame) {
+            btnShowNewGame.addEventListener('click', () => {
+                if (elLobby) elLobby.style.display = 'none';
+                const newGameScreen = document.getElementById('new-game-settings-screen');
+                if (newGameScreen) newGameScreen.style.display = 'flex';
+                
+                // Initialize default fields on settings screen
+                const nameInput = document.getElementById('setting-world-name');
+                if (nameInput) nameInput.value = 'New World';
+                
+                currentGameMode = 'survival';
+                cheatsEnabled = false;
+                updateModeButtonsUI();
+                updateCheatsUIState();
+            });
+        }
+
+        if (btnCancelNewGame) {
+            btnCancelNewGame.addEventListener('click', () => {
+                const newGameScreen = document.getElementById('new-game-settings-screen');
+                if (newGameScreen) newGameScreen.style.display = 'none';
+                if (elLobby) elLobby.style.display = 'flex';
+                renderSavesList();
+            });
+        }
+
+        if (btnStartNewGame) {
+            btnStartNewGame.addEventListener('click', () => {
+                startNewWorld();
+            });
+        }
+
+        if (btnNewModeSurvival) {
+            btnNewModeSurvival.addEventListener('click', () => {
+                currentGameMode = 'survival';
+                updateModeButtonsUI();
+            });
+        }
+
+        if (btnNewModeFreedom) {
+            btnNewModeFreedom.addEventListener('click', () => {
+                currentGameMode = 'freedom';
+                updateModeButtonsUI();
+            });
+        }
+
+        if (btnNewCheatsDisabled) {
+            btnNewCheatsDisabled.addEventListener('click', () => {
+                cheatsEnabled = false;
+                updateCheatsUIState();
+            });
+        }
+
+        if (btnNewCheatsEnabled) {
+            btnNewCheatsEnabled.addEventListener('click', () => {
+                cheatsEnabled = true;
+                updateCheatsUIState();
+            });
+        }
+
+        // Pause Menu Listeners
+        const btnResumeGame = document.getElementById('btn-resume-game');
+        if (btnResumeGame) {
+            btnResumeGame.addEventListener('click', () => {
+                requestPointerLock();
+                const pauseMenu = document.getElementById('pause-menu');
+                if (pauseMenu) pauseMenu.style.display = 'none';
+            });
+        }
+
+        const btnPauseSettings = document.getElementById('btn-pause-settings');
+        if (btnPauseSettings) {
+            btnPauseSettings.addEventListener('click', () => {
+                const pauseMenu = document.getElementById('pause-menu');
+                if (pauseMenu) pauseMenu.style.display = 'none';
+                const ingameSettings = document.getElementById('in-game-settings-screen');
+                if (ingameSettings) ingameSettings.style.display = 'flex';
+                
+                // Sync UI controls with current settings
+                updateCheatsUIState();
+                updatePhysicsUIState();
+            });
+        }
+
+        const btnSaveQuit = document.getElementById('btn-save-quit');
+        if (btnSaveQuit) {
+            btnSaveQuit.addEventListener('click', () => {
+                saveWorld();
+                gameActive = false;
+                exitPointerLock();
+                
+                const pauseMenu = document.getElementById('pause-menu');
+                if (pauseMenu) pauseMenu.style.display = 'none';
+                
+                if (elHud) elHud.style.display = 'none';
+                if (elCrosshair) elCrosshair.style.display = 'none';
+                if (elLobby) elLobby.style.display = 'flex';
+                
+                resetGameScene();
+                renderSavesList();
+            });
+        }
+
+
+        const btnInGameCheatsDisabled = document.getElementById('btn-ingame-cheats-disabled');
+        const btnInGameCheatsEnabled = document.getElementById('btn-ingame-cheats-enabled');
+        if (btnInGameCheatsDisabled) {
+            btnInGameCheatsDisabled.addEventListener('click', () => {
+                cheatsEnabled = false;
+                updateCheatsUIState();
+            });
+        }
+        if (btnInGameCheatsEnabled) {
+            btnInGameCheatsEnabled.addEventListener('click', () => {
+                cheatsEnabled = true;
+                updateCheatsUIState();
+            });
+        }
+
+        const btnCloseInGameSettings = document.getElementById('btn-close-ingame-settings');
+        if (btnCloseInGameSettings) {
+            btnCloseInGameSettings.addEventListener('click', () => {
+                const ingameSettings = document.getElementById('in-game-settings-screen');
+                if (ingameSettings) ingameSettings.style.display = 'none';
+                const pauseMenu = document.getElementById('pause-menu');
+                if (pauseMenu) pauseMenu.style.display = 'flex';
+            });
+        }
+
+        function updateModeButtonsUI() {
+            const btnSurvival = document.getElementById('btn-mode-survival');
+            const btnFreedom = document.getElementById('btn-mode-freedom');
+            if (btnSurvival && btnFreedom) {
+                if (currentGameMode === 'survival') {
+                    btnSurvival.classList.add('active');
+                    btnSurvival.style.borderColor = 'var(--cyan)';
+                    btnSurvival.style.background = 'rgba(0, 240, 255, 0.1)';
+                    btnSurvival.style.color = 'var(--cyan)';
+                    
+                    btnFreedom.classList.remove('active');
+                    btnFreedom.style.borderColor = 'rgba(255,255,255,0.1)';
+                    btnFreedom.style.background = 'rgba(255,255,255,0.02)';
+                    btnFreedom.style.color = '#8a90a0';
+                } else {
+                    btnFreedom.classList.add('active');
+                    btnFreedom.style.borderColor = 'var(--cyan)';
+                    btnFreedom.style.background = 'rgba(0, 240, 255, 0.1)';
+                    btnFreedom.style.color = 'var(--cyan)';
+                    
+                    btnSurvival.classList.remove('active');
+                    btnSurvival.style.borderColor = 'rgba(255,255,255,0.1)';
+                    btnSurvival.style.background = 'rgba(255,255,255,0.02)';
+                    btnSurvival.style.color = '#8a90a0';
+                }
+            }
+
+            // Dedicated Tropical Reef turtle spawning
+            for (let c = 0; c < 8; c++) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = Math.random() * 70;
+                const ax = 0 + Math.cos(angle) * dist;
+                const az = -480 + Math.sin(angle) * dist;
+                const ay = getTerrainHeight(ax, az);
+                
+                if (ay <= WATER_Y) {
+                    const swimY = ay + (WATER_Y - ay) * 0.25;
+                    const mesh = createTurtleMesh();
+                    mesh.position.set(ax, swimY, az);
+                    scene.add(mesh);
+                    
+                    animals.push({
+                        id: Math.random().toString(36).substr(2, 6),
+                        type: 'turtle',
+                        mesh: mesh,
+                        x: ax,
+                        y: swimY,
+                        z: az,
+                        spawnX: ax,
+                        spawnZ: az,
+                        targetX: ax + (Math.random() - 0.5) * 20,
+                        targetZ: az + (Math.random() - 0.5) * 20,
+                        waitTime: Math.random() * 2.0,
+                        speed: 0.5 + Math.random() * 0.4, // Turtles swim slower and more gracefully!
+                        health: 30,
+                        maxHealth: 30,
+                        isDead: false,
+                        deathTime: 0,
+                        kx: 0,
+                        kz: 0
+                    });
+                }
+            }
+        }
+
+        function updatePhysicsUIState() {
+            const btnDisabled = document.getElementById('btn-physics-disabled');
+            const btnEnabled = document.getElementById('btn-physics-enabled');
+            if (structuralPhysicsEnabled) {
+                if (btnDisabled) { btnDisabled.classList.remove('active'); btnDisabled.style.borderColor = 'rgba(255,255,255,0.1)'; btnDisabled.style.background = 'rgba(255,255,255,0.02)'; btnDisabled.style.color = '#8a90a0'; }
+                if (btnEnabled) { btnEnabled.classList.add('active'); btnEnabled.style.borderColor = 'var(--cyan)'; btnEnabled.style.background = 'rgba(0, 240, 255, 0.1)'; btnEnabled.style.color = 'var(--cyan)'; }
+            } else {
+                if (btnDisabled) { btnDisabled.classList.add('active'); btnDisabled.style.borderColor = 'var(--cyan)'; btnDisabled.style.background = 'rgba(0, 240, 255, 0.1)'; btnDisabled.style.color = 'var(--cyan)'; }
+                if (btnEnabled) { btnEnabled.classList.remove('active'); btnEnabled.style.borderColor = 'rgba(255,255,255,0.1)'; btnEnabled.style.background = 'rgba(255,255,255,0.02)'; btnEnabled.style.color = '#8a90a0'; }
+            }
+        }
+
+        function startNewWorld() {
+            activeWorldId = 'world_' + Date.now();
+            
+            const nameInput = document.getElementById('setting-world-name');
+            currentWorldName = nameInput ? nameInput.value.trim() || 'New World' : 'New World';
+            
+            cameraView = 'first';
+            
+            minedStoneCoords = new Set();
+            choppedTreeCoords = new Set();
+            
+            // Hide menu overlays
+            const newGameScreen = document.getElementById('new-game-settings-screen');
+            if (newGameScreen) newGameScreen.style.display = 'none';
+            if (elLobby) elLobby.style.display = 'none';
+            const startScreen = document.getElementById('start-screen');
+            if (startScreen) startScreen.style.display = 'none';
+            
+            isHost = true;
+            isConnected = false;
+            
+            if (!scene) {
+                startGame();
+            } else {
+                resetGameScene();
+                
+                // Reset spawn position in Plains
+                const spawnZ = 20;
+                const spawnY = getTerrainHeight(60, spawnZ) + 1.6;
+                camera.position.set(60, spawnY, spawnZ);
+                highestYSinceGrounded = camera.position.y;
+                camera.rotation.set(0, 0, 0);
+                
+                // Show HUD
+                if (elHud) elHud.style.display = 'flex';
+                gameActive = true;
+                
+                updateCheatsUIState();
+                updateHud();
+                updateHotbarUI();
+                updateInventoryUI();
+                updateMinecraftStatsUI();
+                updateWeaponUI();
+                
+                document.activeElement.blur();
+                window.focus();
+                
+                updateChunks();
+                requestPointerLock();
+            }
+        }
 
         function updateActiveSwatchesInUI() {
             const categories = ['skin', 'hair', 'eye', 'shirt', 'pants'];
@@ -466,6 +759,43 @@ export function initNeonBruiser(): Cleanup {
                     });
                 }
             });
+
+            // Dedicated Tropical Reef fish spawning
+            for (let c = 0; c < 35; c++) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = Math.random() * 70;
+                const ax = 0 + Math.cos(angle) * dist;
+                const az = -480 + Math.sin(angle) * dist;
+                const ay = getTerrainHeight(ax, az);
+                
+                if (ay <= WATER_Y) {
+                    const fishY = ay + (WATER_Y - ay) * (0.2 + Math.random() * 0.6);
+                    const mesh = createFishMesh();
+                    mesh.position.set(ax, fishY, az);
+                    scene.add(mesh);
+                    
+                    animals.push({
+                        id: Math.random().toString(36).substr(2, 6),
+                        type: 'fish',
+                        mesh: mesh,
+                        x: ax,
+                        y: fishY,
+                        z: az,
+                        spawnX: ax,
+                        spawnZ: az,
+                        targetX: ax + (Math.random() - 0.5) * 25,
+                        targetZ: az + (Math.random() - 0.5) * 25,
+                        waitTime: Math.random() * 2.0,
+                        speed: 1.2 + Math.random() * 0.8,
+                        health: 15,
+                        maxHealth: 15,
+                        isDead: false,
+                        deathTime: 0,
+                        kx: 0,
+                        kz: 0
+                    });
+                }
+            }
         }
 
         document.querySelectorAll('.color-swatch').forEach(swatch => {
@@ -670,15 +1000,17 @@ export function initNeonBruiser(): Cleanup {
 
             peer.on('open', (id) => {
                 peerId = id;
-                elPeerIdDisplay.value = id;
-                elCopyBtn.disabled = false;
-                elStatus.innerText = "Connected to network. Share ID to start game.";
-                elBtnHost.innerText = "Host Game (Room Ready)";
-                elBtnHost.disabled = false;
+                if (elPeerIdDisplay) elPeerIdDisplay.value = id;
+                if (elCopyBtn) elCopyBtn.disabled = false;
+                if (elStatus) elStatus.innerText = "Connected to network. Share ID to start game.";
+                if (elBtnHost) {
+                    elBtnHost.innerText = "Host Game (Room Ready)";
+                    elBtnHost.disabled = false;
+                }
                 
                 const urlParams = new URLSearchParams(window.location.search);
                 const joinId = urlParams.get('join');
-                if (joinId) {
+                if (joinId && elJoinInput) {
                     const cleanJoinId = joinId.trim().toUpperCase();
                     elJoinInput.value = cleanJoinId;
                     connectToOpponent(cleanJoinId);
@@ -716,42 +1048,68 @@ export function initNeonBruiser(): Cleanup {
         }
 
         // Copy Room Link
-        elCopyBtn.addEventListener('click', () => {
-            if (!peerId) return;
-            const shareLink = window.location.origin + window.location.pathname + '?join=' + peerId;
-            navigator.clipboard.writeText(shareLink).then(() => {
-                elToast.classList.add('show');
-                setTimeout(() => elToast.classList.remove('show'), 2000);
-            }).catch(err => {
-                navigator.clipboard.writeText(peerId);
-                elToast.innerText = "Copied Room ID!";
-                elToast.classList.add('show');
-                setTimeout(() => elToast.classList.remove('show'), 2000);
+        if (elCopyBtn) {
+            elCopyBtn.addEventListener('click', () => {
+                if (!peerId) return;
+                const shareLink = window.location.origin + window.location.pathname + '?join=' + peerId;
+                navigator.clipboard.writeText(shareLink).then(() => {
+                    if (elToast) {
+                        elToast.classList.add('show');
+                        setTimeout(() => elToast.classList.remove('show'), 2000);
+                    }
+                }).catch(err => {
+                    navigator.clipboard.writeText(peerId);
+                    if (elToast) {
+                        elToast.innerText = "Copied Room ID!";
+                        elToast.classList.add('show');
+                        setTimeout(() => elToast.classList.remove('show'), 2000);
+                    }
+                });
             });
-        });
+        }
 
-        elBtnHost.addEventListener('click', () => {
-            elStatus.innerText = "Waiting for an opponent to join...";
-        });
+        if (elBtnHost) {
+            elBtnHost.addEventListener('click', () => {
+                isHost = true;
+                if (elStatus) elStatus.innerText = "Waiting for an opponent to join...";
+                const saves = JSON.parse(localStorage.getItem('survivalism_saves') || '[]');
+                if (saves.length > 0) {
+                    const mostRecentSave = saves[saves.length - 1];
+                    loadWorld(mostRecentSave.id);
+                } else {
+                    startGame();
+                }
+            });
+        }
 
-        elBtnSolo.addEventListener('click', () => {
-            isHost = true;
-            isConnected = false;
-            startGame();
-        });
+        if (elBtnSolo) {
+            elBtnSolo.addEventListener('click', () => {
+                isHost = true;
+                isConnected = false;
+                const saves = JSON.parse(localStorage.getItem('survivalism_saves') || '[]');
+                if (saves.length > 0) {
+                    const mostRecentSave = saves[saves.length - 1];
+                    loadWorld(mostRecentSave.id);
+                } else {
+                    startGame();
+                }
+            });
+        }
 
-        elBtnJoin.addEventListener('click', () => {
-            const targetId = elJoinInput.value.trim().toUpperCase();
-            if (!targetId) {
-                elStatus.innerText = "Please enter a valid Room ID.";
-                return;
-            }
-            connectToOpponent(targetId);
-        });
+        if (elBtnJoin) {
+            elBtnJoin.addEventListener('click', () => {
+                const targetId = elJoinInput ? elJoinInput.value.trim().toUpperCase() : '';
+                if (!targetId) {
+                    if (elStatus) elStatus.innerText = "Please enter a valid Room ID.";
+                    return;
+                }
+                connectToOpponent(targetId);
+            });
+        }
 
         function connectToOpponent(targetId) {
             const cleanId = targetId.trim().toUpperCase();
-            elStatus.innerText = "Connecting to room " + cleanId + "...";
+            if (elStatus) elStatus.innerText = "Connecting to room " + cleanId + "...";
             conn = peer.connect(cleanId);
             isHost = false;
             setupConnection();
@@ -760,7 +1118,7 @@ export function initNeonBruiser(): Cleanup {
         function setupConnection() {
             const handleOpen = () => {
                 isConnected = true;
-                elStatus.innerText = "Connection established! Preparing game...";
+                if (elStatus) elStatus.innerText = "Connection established! Preparing game...";
                 
                 // Sync customized character appearance
                 sendNetworkMessage({
@@ -800,12 +1158,12 @@ export function initNeonBruiser(): Cleanup {
             elCrosshair.style.display = 'none';
             elGameOver.style.display = 'none';
             elMapOverlay.style.display = 'none';
-            elStatus.innerText = "Opponent disconnected. Room reset.";
+            if (elStatus) elStatus.innerText = "Opponent disconnected. Room reset.";
             resetGameScene();
         }
 
         // --- THREE.JS GAME ENGINE SETUP ---
-        let scene, camera, renderer, clock;
+        let scene, camera, renderer, clock, placementPreview;
         let isLocked = false;
         let myHealth = 100;
         let oppHealth = 100;
@@ -886,6 +1244,7 @@ export function initNeonBruiser(): Cleanup {
         let myBurnTime = 0;
         let isOpponentBurning = false;
         const fireParticles = [];
+        const eatingParticles = [];
         
         // Quantum Lands Cube Variables
         let quantumCubes = [];
@@ -908,7 +1267,19 @@ export function initNeonBruiser(): Cleanup {
         hotbarCounts[1] = 1;
         let inventoryItems = new Array(27).fill(null);
         let inventoryCounts = new Array(27).fill(0);
+        let armorItems = {
+            helmet: null,
+            chestplate: null,
+            leggings: null,
+            gauntlets: null,
+            boots: null
+        };
         const placedObjects = [];
+        let activeFurnace = null;
+        let furnaceUIOpen = false;
+        let lastMiningHoldTime = 0;
+        let groundHits = 0;
+        let lastGroundHitTime = 0;
         const obtainedItems = new Set();
         obtainedItems.add('wooden_axe');
         obtainedItems.add('crafting_bench');
@@ -919,6 +1290,11 @@ export function initNeonBruiser(): Cleanup {
         let isMouseDown = false;
         let mouseDownStartTime = 0;
         let choppingTreeTarget = null;
+        let isRodBaited = false;
+        let activeBobber = null;
+        let flyingFish = null;
+        let fallingBlocks = [];
+        let debrisParticles = [];
 
         // Environment Details
         const grassClumps = [];
@@ -948,6 +1324,18 @@ export function initNeonBruiser(): Cleanup {
         const peerArrows = [];
         let portalVortices = [];
         let lastQuantumDamageTime = 0;
+
+        // Survivalism State & Third Person camera views
+        let cameraView = 'first'; // 'first', 'third_back', 'third_front'
+        let cheatsEnabled = false;
+        let currentGameMode = 'survival'; // 'survival', 'freedom'
+        let currentWorldName = 'My World';
+        let activeWorldId = null;
+        let minedStoneCoords = new Set();
+        let choppedTreeCoords = new Set();
+
+        let playerMeshGroup = null;
+        let playerHead = null, playerLArm = null, playerRArm = null, playerLLeg = null, playerRLeg = null;
 
         // Opponent
         let opponentGroup;
@@ -1357,20 +1745,28 @@ export function initNeonBruiser(): Cleanup {
         // Custom Pointer Lock logic
         function initPointerLock() {
             document.addEventListener('pointerlockchange', () => {
+                const prompt = document.getElementById('click-lock-prompt');
+                const pauseMenu = document.getElementById('pause-menu');
+                const ingameSettings = document.getElementById('in-game-settings-screen');
                 if (document.pointerLockElement === document.body) {
                     isLocked = true;
                     elCrosshair.style.display = 'flex';
-                    const prompt = document.getElementById('click-lock-prompt');
                     if (prompt) prompt.style.display = 'none';
+                    if (pauseMenu) pauseMenu.style.display = 'none';
+                    if (ingameSettings) ingameSettings.style.display = 'none';
                     gameActive = true;
                     document.activeElement.blur();
                     window.focus();
                 } else {
                     isLocked = false;
                     elCrosshair.style.display = 'none';
-                    if (gameActive && myHealth > 0 && oppHealth > 0 && !mapOpen) {
-                        const prompt = document.getElementById('click-lock-prompt');
-                        if (prompt) prompt.style.display = 'block';
+                    if (gameActive && myHealth > 0 && oppHealth > 0) {
+                        if (chatOpen || mapOpen || inventoryOpen || furnaceUIOpen || chestUIOpen) {
+                            if (prompt) prompt.style.display = 'none';
+                        } else {
+                            if (pauseMenu) pauseMenu.style.display = 'flex';
+                            if (prompt) prompt.style.display = 'none';
+                        }
                     }
                 }
             });
@@ -1397,6 +1793,19 @@ export function initNeonBruiser(): Cleanup {
             
             scene = new THREE.Scene();
             
+            // Placement Preview Box
+            const previewGeo = new THREE.BoxGeometry(1, 1, 1);
+            const previewMat = new THREE.MeshBasicMaterial({
+                color: 0x00f0ff,
+                wireframe: true,
+                transparent: true,
+                opacity: 0.6,
+                depthWrite: false
+            });
+            placementPreview = new THREE.Mesh(previewGeo, previewMat);
+            placementPreview.visible = false;
+            scene.add(placementPreview);
+            
             // Camera (Yaw Y first, Pitch X second)
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
             camera.rotation.order = 'YXZ';
@@ -1405,9 +1814,12 @@ export function initNeonBruiser(): Cleanup {
             const spawnZ = isHost ? 28 : 12;
             const spawnY = getTerrainHeight(60, spawnZ) + 1.6;
             camera.position.set(60, spawnY, spawnZ);
+            highestYSinceGrounded = camera.position.y;
             if (!isHost) {
                 camera.rotation.y = Math.PI; // Look towards Host
             }
+
+            createPlayerMesh();
 
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
@@ -1680,13 +2092,42 @@ export function initNeonBruiser(): Cleanup {
 
             // Set up pointer lock interaction click on body to prevent focus loss
             document.body.addEventListener('click', (event) => {
-                if (gameActive && !mapOpen && elLobby.style.display === 'none' && elGameOver.style.display !== 'flex') {
-                    if (event.target.tagName !== 'BUTTON' && event.target.tagName !== 'INPUT') {
+                const pauseMenu = document.getElementById('pause-menu');
+                const ingameSettings = document.getElementById('in-game-settings-screen');
+                const isPauseMenuOpen = pauseMenu && pauseMenu.style.display === 'flex';
+                const isIngameSettingsOpen = ingameSettings && ingameSettings.style.display === 'flex';
+                
+                if (gameActive && !mapOpen && !chatOpen && !inventoryOpen && !furnaceUIOpen && !isPauseMenuOpen && !isIngameSettingsOpen && elLobby.style.display === 'none' && elGameOver.style.display !== 'flex') {
+                    if (event.target.tagName !== 'BUTTON' && event.target.tagName !== 'INPUT' && event.target.tagName !== 'SELECT') {
                         requestPointerLock();
                     }
                 }
             });
             initPointerLock();
+
+            function autoSaveAndExit() {
+                if (!gameActive) return;
+                saveWorld();
+                gameActive = false;
+                exitPointerLock();
+                
+                const pauseMenu = document.getElementById('pause-menu');
+                if (pauseMenu) pauseMenu.style.display = 'none';
+                
+                if (elHud) elHud.style.display = 'none';
+                if (elCrosshair) elCrosshair.style.display = 'none';
+                if (elLobby) elLobby.style.display = 'flex';
+                
+                resetGameScene();
+                renderSavesList();
+            }
+
+            window.addEventListener('blur', autoSaveAndExit);
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'hidden') {
+                    autoSaveAndExit();
+                }
+            });
 
             // Keyboard Listeners
             window.addEventListener('keydown', onKeyDown);
@@ -1729,6 +2170,7 @@ export function initNeonBruiser(): Cleanup {
                         sendChatMessage();
                     }
                 });
+                checkStructuralPhysics();
             }
         }
 
@@ -2086,29 +2528,33 @@ export function initNeonBruiser(): Cleanup {
             return group;
         }
 
+        function spawnSingleBeeForHive(hx, hy, hz) {
+            const id = Math.random().toString(36).substr(2, 6);
+            const mesh = createBeeMesh();
+            const startX = hx + (Math.random() - 0.5) * 2;
+            const startY = hy - 0.5 - Math.random() * 0.5;
+            const startZ = hz + (Math.random() - 0.5) * 2;
+            mesh.position.set(startX, startY, startZ);
+            scene.add(mesh);
+            
+            bees.push({
+                id: id,
+                mesh: mesh,
+                home: new THREE.Vector3(hx, hy, hz),
+                state: 'wander',
+                pos: new THREE.Vector3(startX, startY, startZ),
+                vel: new THREE.Vector3(),
+                targetFlower: null,
+                nectar: 0,
+                collectTimer: 0,
+                hp: 9,
+                angerTarget: null
+            });
+        }
+
         function spawnBeesForHive(hx, hy, hz) {
             for (let i = 0; i < 5; i++) {
-                const id = Math.random().toString(36).substr(2, 6);
-                const mesh = createBeeMesh();
-                const startX = hx + (Math.random() - 0.5) * 2;
-                const startY = hy - 0.5 - Math.random() * 0.5;
-                const startZ = hz + (Math.random() - 0.5) * 2;
-                mesh.position.set(startX, startY, startZ);
-                scene.add(mesh);
-                
-                bees.push({
-                    id: id,
-                    mesh: mesh,
-                    home: new THREE.Vector3(hx, hy, hz),
-                    state: 'wander',
-                    pos: new THREE.Vector3(startX, startY, startZ),
-                    vel: new THREE.Vector3(),
-                    targetFlower: null,
-                    nectar: 0,
-                    collectTimer: 0,
-                    hp: 9,
-                    angerTarget: null
-                });
+                spawnSingleBeeForHive(hx, hy, hz);
             }
         }
 
@@ -3281,6 +3727,8 @@ export function initNeonBruiser(): Cleanup {
                                 const ty = getTerrainHeight(tx, tz, false);
                                 
                                 if (ty > 0.0) {
+                                    const treeKey = `${tx.toFixed(1)},${tz.toFixed(1)}`;
+                                    if (choppedTreeCoords.has(treeKey)) continue;
                                     const treeGroup = new THREE.Group();
                                     treeGroup.position.set(tx, ty, tz);
                                     
@@ -3601,6 +4049,97 @@ export function initNeonBruiser(): Cleanup {
             bowGroup.add(loadedArrow);
 
             firstPersonHands.add(bowGroup);
+
+            // First Person FOOD Mesh Group
+            foodGroup = new THREE.Group();
+            foodGroup.position.set(0, 0.05, -0.12);
+            foodGroup.rotation.set(0.4, 0, -0.3);
+            foodGroup.visible = false;
+            rightHand.add(foodGroup);
+        }
+
+        function updateHeldFoodVisual(foodType) {
+            if (!foodGroup) return;
+            // Clear previous geometry/children
+            while (foodGroup.children.length > 0) {
+                const child = foodGroup.children[0];
+                foodGroup.remove(child);
+            }
+            
+            // Depending on the food type, create cool pixel-art/voxel style meshes
+            if (foodType === 'porkchop') {
+                // Pinkish raw/cooked porkchop
+                const meatMat = new THREE.MeshStandardMaterial({ color: 0xff9ebb, roughness: 0.8 });
+                const skinMat = new THREE.MeshStandardMaterial({ color: 0xff6a6a, roughness: 0.8 });
+                const boneMat = new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.8 });
+                
+                const meat = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.08, 0.04), meatMat);
+                meat.position.set(0, 0, 0);
+                foodGroup.add(meat);
+                
+                const skin = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.02, 0.045), skinMat);
+                skin.position.set(0, -0.03, 0);
+                foodGroup.add(skin);
+
+                const bone = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.04, 6), boneMat);
+                bone.position.set(0, 0.05, 0);
+                bone.rotation.z = 0.2;
+                foodGroup.add(bone);
+            } else if (foodType === 'beef') {
+                // Brownish-red steak
+                const steakMat = new THREE.MeshStandardMaterial({ color: 0x8b2500, roughness: 0.9 });
+                const fatMat = new THREE.MeshStandardMaterial({ color: 0xfffff0, roughness: 0.9 });
+                
+                const steak = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.09, 0.04), steakMat);
+                steak.position.set(0, 0, 0);
+                foodGroup.add(steak);
+                
+                const fat1 = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.095, 0.045), fatMat);
+                fat1.position.set(0.03, 0, 0);
+                foodGroup.add(fat1);
+            } else if (foodType === 'mutton') {
+                // Red meat
+                const meatMat = new THREE.MeshStandardMaterial({ color: 0xd04040, roughness: 0.8 });
+                const fatMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 });
+                
+                const meat = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.07, 0.04), meatMat);
+                meat.position.set(0, 0, 0);
+                foodGroup.add(meat);
+                
+                const fat = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.015, 0.045), fatMat);
+                fat.position.set(0, 0.03, 0);
+                foodGroup.add(fat);
+            } else if (foodType === 'chicken') {
+                // Chicken drumstick
+                const meatMat = new THREE.MeshStandardMaterial({ color: 0xcd853f, roughness: 0.8 });
+                const boneMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 });
+                
+                const meatPart = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 8), meatMat);
+                meatPart.scale.set(1, 1.4, 1);
+                meatPart.position.set(0, 0.01, 0);
+                foodGroup.add(meatPart);
+                
+                const bone = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.06, 6), boneMat);
+                bone.position.set(0, -0.03, 0);
+                foodGroup.add(bone);
+            } else if (foodType === 'raw_fish') {
+                // Silver-blue fish
+                const bodyMat = new THREE.MeshStandardMaterial({ color: 0x4682b4, roughness: 0.5 });
+                const bellyMat = new THREE.MeshStandardMaterial({ color: 0xe0ffff, roughness: 0.5 });
+                const eyeMat = new THREE.MeshStandardMaterial({ color: 0x000000 });
+                
+                const body = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.1, 0.035), bodyMat);
+                body.position.set(0, 0, 0);
+                foodGroup.add(body);
+                
+                const belly = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.08, 0.04), bellyMat);
+                belly.position.set(0.015, 0, 0);
+                foodGroup.add(belly);
+                
+                const eye = new THREE.Mesh(new THREE.SphereGeometry(0.006, 4, 4), eyeMat);
+                eye.position.set(0.01, 0.035, 0.015);
+                foodGroup.add(eye);
+            }
         }
 
         // Build visual Opponent
@@ -3725,6 +4264,118 @@ export function initNeonBruiser(): Cleanup {
             opponentRLeg.add(shoeR);
         }
 
+        function createPlayerMesh() {
+            if (playerMeshGroup) {
+                scene.remove(playerMeshGroup);
+            }
+            playerMeshGroup = new THREE.Group();
+            playerMeshGroup.visible = false; // Hidden in FP view by default
+            scene.add(playerMeshGroup);
+
+            const skinMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(myAppearance.skin), roughness: 0.8 });
+            const shirtMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(myAppearance.shirt), roughness: 0.7 });
+            const pantsMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(myAppearance.pants), roughness: 0.8 });
+            const shoesMat = new THREE.MeshStandardMaterial({ color: 0x1a202c, roughness: 0.8 });
+            const hairMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(myAppearance.hair), roughness: 0.9 });
+            const pupilMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(myAppearance.eye) });
+
+            // Torso
+            const shirtTorso = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.22, 0.6, 12), shirtMat);
+            shirtTorso.position.y = 1.3;
+            shirtTorso.castShadow = true;
+            shirtTorso.receiveShadow = true;
+            playerMeshGroup.add(shirtTorso);
+
+            const pantsTorso = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.20, 0.6, 12), pantsMat);
+            pantsTorso.position.y = 0.7;
+            pantsTorso.castShadow = true;
+            pantsTorso.receiveShadow = true;
+            playerMeshGroup.add(pantsTorso);
+
+            // Head
+            playerHead = new THREE.Mesh(new THREE.SphereGeometry(0.28, 16, 16), skinMat);
+            playerHead.position.y = 1.8;
+            playerHead.castShadow = true;
+            playerMeshGroup.add(playerHead);
+
+            // Eyes
+            const eyeL = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.045, 0.02), pupilMat);
+            eyeL.position.set(-0.075, 0.05, 0.262);
+            playerHead.add(eyeL);
+
+            const eyeR = eyeL.clone();
+            eyeR.position.x = 0.075;
+            playerHead.add(eyeR);
+
+            // Nose
+            const nose = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.08, 0.07), skinMat);
+            nose.position.set(0, -0.02, 0.26);
+            playerHead.add(nose);
+
+            // Hair
+            const hairTop = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.18, 0.40), hairMat);
+            hairTop.position.set(0, 0.21, -0.06);
+            playerHead.add(hairTop);
+
+            const hairBack = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.22, 0.10), hairMat);
+            hairBack.position.set(0, 0.01, -0.21);
+            playerHead.add(hairBack);
+
+            const hairL = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.14, 0.30), hairMat);
+            hairL.position.set(-0.25, 0.05, -0.01);
+            playerHead.add(hairL);
+
+            const hairR = hairL.clone();
+            hairR.position.x = 0.25;
+            playerHead.add(hairR);
+
+            // Left Arm
+            playerLArm = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.7, 0.12), skinMat);
+            playerLArm.position.set(-0.30, 1.3, 0);
+            playerLArm.castShadow = true;
+            playerMeshGroup.add(playerLArm);
+
+            const sleeveL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.35, 0.14), shirtMat);
+            sleeveL.position.y = 0.18;
+            playerLArm.add(sleeveL);
+
+            // Right Arm
+            playerRArm = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.7, 0.12), skinMat);
+            playerRArm.position.set(0.30, 1.3, 0);
+            playerRArm.castShadow = true;
+            playerMeshGroup.add(playerRArm);
+
+            const sleeveR = sleeveL.clone();
+            playerRArm.add(sleeveR);
+
+            // Left Leg
+            playerLLeg = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.8, 0.15), skinMat);
+            playerLLeg.position.set(-0.11, 0.4, 0);
+            playerLLeg.castShadow = true;
+            playerMeshGroup.add(playerLLeg);
+
+            const shortsL = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.4, 0.17), pantsMat);
+            shortsL.position.y = 0.2;
+            playerLLeg.add(shortsL);
+
+            const shoeL = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.12, 0.22), shoesMat);
+            shoeL.position.set(0, -0.4, 0.03);
+            playerLLeg.add(shoeL);
+
+            // Right Leg
+            playerRLeg = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.8, 0.15), skinMat);
+            playerRLeg.position.set(0.11, 0.4, 0);
+            playerRLeg.castShadow = true;
+            playerMeshGroup.add(playerRLeg);
+
+            const shortsR = shortsL.clone();
+            playerRLeg.add(shortsR);
+
+            const shoeR = shoeL.clone();
+            shoeR.position.set(0, -0.4, 0.03);
+            playerRLeg.add(shoeR);
+        }
+
         function onWindowResize() {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
@@ -3749,6 +4400,13 @@ export function initNeonBruiser(): Cleanup {
                 return;
             }
 
+            if (furnaceUIOpen) {
+                if (event.code === 'KeyE') {
+                    closeFurnaceUI();
+                }
+                return;
+            }
+
             if (inventoryOpen) {
                 if (event.code === 'KeyE') {
                     toggleInventoryOverlay();
@@ -3757,8 +4415,30 @@ export function initNeonBruiser(): Cleanup {
             }
             
             // Map Screen toggle
-            if (event.code === 'KeyM') {
+            if (event.code === 'KeyN') {
                 toggleMapOverlay();
+                return;
+            }
+
+            // Eating Food Input
+            if (event.code === 'KeyM') {
+                if (!gameActive || myHealth <= 0 || mapOpen || inventoryOpen || chatOpen) return;
+                
+                const currentItem = hotbarItems[selectedHotbarIndex];
+                if (currentItem && ['porkchop', 'beef', 'mutton', 'chicken', 'raw_fish'].includes(currentItem)) {
+                    if (hunger >= 100) {
+                        addChatMessage("Your hunger bar is already full!", "system");
+                        return;
+                    }
+                    if (!isEating) {
+                        isEating = true;
+                        eatingTimer = 0;
+                        eatingSoundTimer = 0.24; // chew almost immediately
+                        eatingItem = currentItem;
+                    }
+                } else {
+                    addChatMessage("Hold food in your hand and hold [M] to eat!", "system");
+                }
                 return;
             }
  
@@ -3784,7 +4464,9 @@ export function initNeonBruiser(): Cleanup {
                     if (isGrounded && gameActive && myHealth > 0 && !mapOpen && !inventoryOpen) {
                         velocity.y = 6.2; // Jump impulse
                         isGrounded = false;
-                        hunger = Math.max(0, hunger - 2); // Jump decays hunger!
+                        if (currentGameMode !== 'freedom') {
+                            hunger = Math.max(0, hunger - 2); // Jump decays hunger!
+                        }
                         updateMinecraftStatsUI();
                     }
                     break;
@@ -3807,6 +4489,9 @@ export function initNeonBruiser(): Cleanup {
                     handleKeyPressF();
                     break;
                 case 'KeyE':
+                    if (handleKeyEInteraction()) {
+                        break;
+                    }
                     toggleInventoryOverlay();
                     break;
                 case 'KeyI':
@@ -3872,11 +4557,21 @@ export function initNeonBruiser(): Cleanup {
                 case 'Space':
                     moveForces.jump = false;
                     break;
+                case 'KeyM':
+                    if (isEating) {
+                        isEating = false;
+                        if (rightHand) {
+                            rightHand.position.set(0.35, -0.3, -0.7);
+                            rightHand.rotation.set(0, 0, 0);
+                        }
+                    }
+                    break;
             }
         }
 
         // Mouse click triggers active weapon when locked
         window.addEventListener('mousedown', (e) => {
+            if (isEating) return;
             if (gameActive && myHealth > 0 && isLocked && !mapOpen && !chatOpen && !inventoryOpen) {
                 const aimedBench = getCraftingBenchAimTarget();
                 if (aimedBench) {
@@ -3888,6 +4583,23 @@ export function initNeonBruiser(): Cleanup {
                 if (e.button === 0) { // Left click
                     const item = hotbarItems[selectedHotbarIndex];
                     
+                    const aimedObj = getPlacedObjectAimTarget();
+                    if (aimedObj && aimedObj.type === 'door') {
+                        if (item && ['wooden_axe', 'wooden_sword', 'wooden_pickaxe', 'stone_axe', 'stone_sword', 'stone_pickaxe'].includes(item)) {
+                            aimedObj.hits = (aimedObj.hits || 0) + 1;
+                            AudioSynth.playHit(aimedObj.pos);
+                            updatePlacedObjectCracks(aimedObj);
+                            if (aimedObj.hits >= 3) {
+                                minePlacedObject(aimedObj);
+                            }
+                        } else {
+                            aimedObj.isOpen = !aimedObj.isOpen;
+                            aimedObj.mesh.rotation.y = aimedObj.initialRotationY + (aimedObj.isOpen ? Math.PI / 2 : 0);
+                            AudioSynth.playHit(aimedObj.pos);
+                        }
+                        return;
+                    }
+                    
                     isMouseDown = true;
                     mouseDownStartTime = Date.now();
                     choppingTreeTarget = getTreeAimTarget();
@@ -3896,7 +4608,7 @@ export function initNeonBruiser(): Cleanup {
                         triggerTurretShoot();
                     } else if (item === 'bow') {
                         triggerBowShoot();
-                    } else if (item && ['log', 'planks', 'crafting_bench'].includes(item)) {
+                    } else if (item && ['log', 'planks', 'crafting_bench', 'stone', 'smooth_stone', 'stone_cutter', 'boat', 'stone_stairs', 'stone_slab', 'wooden_stairs', 'door', 'ladder'].includes(item)) {
                         const placed = tryPlaceBlock();
                         if (placed) return;
                     } else if (item && ['wooden_axe', 'wooden_sword', 'wooden_pickaxe'].includes(item)) {
@@ -4011,6 +4723,14 @@ export function initNeonBruiser(): Cleanup {
             if (text.length > 0) {
                 const parts = text.split(/\s+/);
                 const command = parts[0].toLowerCase();
+                if (command === '/night' || command === '/tp') {
+                    if (!cheatsEnabled) {
+                        addChatMessage("Cheats are disabled in this world!", "system");
+                        elChatInput.value = '';
+                        toggleChat();
+                        return;
+                    }
+                }
                 if (command === '/night') {
                     triggerNightCommand();
                 } else if (command === '/tp') {
@@ -4054,9 +4774,10 @@ export function initNeonBruiser(): Cleanup {
                         playerInCave = false;
                         const tx = coords.x;
                         const tz = coords.z;
-                        const ty = getTerrainHeight(tx, tz, false) + 1.6;
-                        camera.position.set(tx, ty, tz);
-                        velocity.set(0, 0, 0); // Reset speed
+                         const ty = getTerrainHeight(tx, tz, false) + 1.6;
+                         camera.position.set(tx, ty, tz);
+                         highestYSinceGrounded = camera.position.y;
+                         velocity.set(0, 0, 0); // Reset speed
                         
                         // Immediately sync position
                         sendNetworkMessage({
@@ -4171,6 +4892,7 @@ export function initNeonBruiser(): Cleanup {
         const WEAPON_SWING_COOLDOWN = 400;
 
         function triggerWeaponSwing(weaponType) {
+            if (isEating) return;
             if (!gameActive || myHealth <= 0 || inTurret) return;
             const now = Date.now();
             if (now - lastWeaponSwingTime < WEAPON_SWING_COOLDOWN) return;
@@ -4328,6 +5050,9 @@ export function initNeonBruiser(): Cleanup {
         }
 
         function chopTreeDown(tree) {
+            const coordKey = `${tree.x.toFixed(1)},${tree.z.toFixed(1)}`;
+            choppedTreeCoords.add(coordKey);
+            
             tree.isChopped = true;
             tree.logsLeft = 4;
 
@@ -4430,6 +5155,7 @@ export function initNeonBruiser(): Cleanup {
         }
 
         function triggerKick() {
+            if (isEating) return;
             if (!gameActive || myHealth <= 0 || inTurret) return;
             if (localDrawingBow) return; // Block kick if drawing bow
 
@@ -4455,6 +5181,7 @@ export function initNeonBruiser(): Cleanup {
         }
 
         function triggerBowShoot() {
+            if (isEating) return;
             if (!gameActive || myHealth <= 0 || inTurret) return;
             if (localPunching || localKicking) return; // Block shooting while punching/kicking
             const now = Date.now();
@@ -4684,7 +5411,7 @@ export function initNeonBruiser(): Cleanup {
                             if (a.health <= 0) {
                                 a.isDead = true;
                                 a.deathTime = 0;
-                                spawnDroppedFood(getFoodTypeForAnimal(a.type), a.mesh.position);
+                                handleAnimalDeathDrops(a);
                             }
                             
                             if (isConnected) {
@@ -4896,7 +5623,22 @@ export function initNeonBruiser(): Cleanup {
         function takeDamage(damage, kx, kz, reason = "Killed by Opponent!") {
             if (myHealth <= 0) return;
 
-            myHealth = Math.max(0, myHealth - damage);
+            let reduction = 0;
+            const slots = ['helmet', 'chestplate', 'leggings', 'gauntlets', 'boots'];
+            slots.forEach(slot => {
+                const item = armorItems[slot];
+                if (item) {
+                    if (item.startsWith('turtle_')) {
+                        reduction += 0.16; // Tier 5: 16% per piece
+                    } else if (item.startsWith('leather_')) {
+                        reduction += 0.12; // Tier 4: 12% per piece
+                    } else if (item.startsWith('iron_')) {
+                        reduction += 0.08; // Tier 3: 8% per piece
+                    }
+                }
+            });
+            const reducedDamage = Math.max(1, Math.round(damage * (1 - reduction)));
+            myHealth = Math.max(0, myHealth - reducedDamage);
             updateHud();
 
             const vignette = document.getElementById('damage-vignette');
@@ -4909,8 +5651,10 @@ export function initNeonBruiser(): Cleanup {
             knockbackVel.set(kx, 0, kz);
             velocity.x += kx;
             velocity.z += kz;
-            velocity.y += 2.0; // pop up
-            isGrounded = false;
+            if (reason !== "Fell from a high place") {
+                velocity.y += 2.0; // pop up
+                isGrounded = false;
+            }
 
             const kLen = Math.sqrt(kx * kx + kz * kz);
             if (kLen > 0.01) {
@@ -5111,6 +5855,270 @@ export function initNeonBruiser(): Cleanup {
             updateHotbarUI();
         }
 
+        function saveWorld() {
+            if (!gameActive) return;
+            const saveId = activeWorldId || 'world_' + Date.now();
+            
+            // Serialize placedObjects (omit THREE.Mesh references)
+            const serializedObjects = placedObjects.map(obj => ({
+                type: obj.type,
+                x: obj.pos.x,
+                y: obj.pos.y,
+                z: obj.pos.z,
+                isOpen: !!obj.isOpen,
+                initialRotationY: obj.initialRotationY,
+                furnaceState: obj.furnaceState || null,
+                chestInventoryItems: obj.chestInventoryItems || null,
+                chestInventoryCounts: obj.chestInventoryCounts || null
+            }));
+            
+            const saveObj = {
+                id: saveId,
+                worldName: currentWorldName,
+                mode: currentGameMode,
+                cameraView: cameraView,
+                cheatsEnabled: cheatsEnabled,
+                structuralPhysicsEnabled: structuralPhysicsEnabled,
+                date: new Date().toLocaleString(),
+                
+                myHealth: myHealth,
+                hunger: hunger,
+                
+                playerX: camera.position.x,
+                playerY: camera.position.y,
+                playerZ: camera.position.z,
+                playerRotY: camera.rotation.y,
+                playerInCave: playerInCave,
+                
+                inventoryItems: inventoryItems,
+                inventoryCounts: inventoryCounts,
+                hotbarItems: hotbarItems,
+                hotbarCounts: hotbarCounts,
+                selectedHotbarIndex: selectedHotbarIndex,
+                armorItems: armorItems,
+                
+                 placedObjects: serializedObjects,
+                 minedStoneCoords: Array.from(minedStoneCoords),
+                 choppedTreeCoords: Array.from(choppedTreeCoords),
+                 minedCoralCoords: Array.from(minedCoralCoords),
+                 obtainedItems: Array.from(obtainedItems)
+             };
+            
+            const saves = JSON.parse(localStorage.getItem('survivalism_saves') || '[]');
+            const index = saves.findIndex(s => s.id === saveId);
+            if (index >= 0) {
+                saves[index] = saveObj;
+            } else {
+                saves.push(saveObj);
+            }
+            
+            localStorage.setItem('survivalism_saves', JSON.stringify(saves));
+            activeWorldId = saveId;
+            addChatMessage("World saved successfully!", "system");
+        }
+
+        function loadWorld(saveId) {
+            const saves = JSON.parse(localStorage.getItem('survivalism_saves') || '[]');
+            const save = saves.find(s => s.id === saveId);
+            if (!save) return;
+            
+            if (!scene) {
+                init3D();
+                let turretX = -78;
+                let turretZ = -78;
+                spawnTurretMesh(turretX, turretZ);
+                
+                const villagerData = [];
+                const villageCenter = { x: -78, z: -78 };
+                for (let i = 0; i < 5; i++) {
+                    const id = Math.random().toString(36).substr(2, 6);
+                    const vx = villageCenter.x + (Math.random() - 0.5) * 25;
+                    const vz = villageCenter.z + (Math.random() - 0.5) * 25;
+                    villagerData.push({ id, x: vx, z: vz });
+                }
+                spawnVillagers(villagerData);
+                spawnInitialAnimals();
+                animate();
+            }
+            
+            resetGameScene();
+            
+            activeWorldId = save.id;
+            currentWorldName = save.worldName;
+            currentGameMode = save.mode;
+            cameraView = save.cameraView || 'first';
+            cheatsEnabled = !!save.cheatsEnabled;
+            
+            myHealth = save.myHealth;
+            hunger = save.hunger;
+            playerInCave = !!save.playerInCave;
+            
+            camera.position.set(save.playerX, save.playerY, save.playerZ);
+            camera.rotation.y = save.playerRotY;
+            velocity.set(0, 0, 0);
+            isGrounded = false;
+            highestYSinceGrounded = camera.position.y;
+            
+            inventoryItems = [...save.inventoryItems];
+            inventoryCounts = [...save.inventoryCounts];
+            hotbarItems = [...save.hotbarItems];
+            hotbarCounts = [...save.hotbarCounts];
+            selectedHotbarIndex = save.selectedHotbarIndex || 0;
+            if (save.armorItems) {
+                armorItems = { ...save.armorItems };
+            } else {
+                armorItems = {
+                    helmet: null,
+                    chestplate: null,
+                    leggings: null,
+                    gauntlets: null,
+                    boots: null
+                };
+            }
+            
+            minedStoneCoords = new Set(save.minedStoneCoords || []);
+            choppedTreeCoords = new Set(save.choppedTreeCoords || []);
+            minedCoralCoords = new Set(save.minedCoralCoords || []);
+            
+            clearPlacedObjects();
+            obtainedItems.clear();
+            if (save.obtainedItems) {
+                save.obtainedItems.forEach(item => obtainedItems.add(item));
+            } else {
+                obtainedItems.add('wooden_axe');
+                obtainedItems.add('crafting_bench');
+            }
+            if (save.placedObjects) {
+                save.placedObjects.forEach(obj => {
+                    const pos = new THREE.Vector3(obj.x, obj.y, obj.z);
+                    spawnPlacedObject(obj.type, pos, false);
+                    const spawned = placedObjects[placedObjects.length - 1];
+                    if (spawned) {
+                        spawned.isOpen = !!obj.isOpen;
+                        spawned.initialRotationY = obj.initialRotationY;
+                        if (spawned.mesh) {
+                            spawned.mesh.rotation.y = obj.initialRotationY + (spawned.isOpen ? Math.PI / 2 : 0);
+                        }
+                        if (obj.furnaceState) {
+                            spawned.furnaceState = obj.furnaceState;
+                        }
+                        if (obj.chestInventoryItems) {
+                            spawned.chestInventoryItems = obj.chestInventoryItems;
+                            spawned.chestInventoryCounts = obj.chestInventoryCounts;
+                        }
+                    }
+                });
+            }
+            
+            // Sync visibility based on whether the player is in a cave
+            clientZombies.forEach(mesh => { mesh.visible = (!!mesh.inCave === playerInCave); });
+            animals.forEach(a => a.mesh.visible = !playerInCave);
+            bees.forEach(b => b.mesh.visible = !playerInCave);
+            clientBees.forEach(mesh => mesh.visible = !playerInCave);
+            
+            updateCheatsUIState();
+            
+            updateHud();
+            updateHotbarUI();
+            updateInventoryUI();
+            updateMinecraftStatsUI();
+            updateWeaponUI();
+            
+            document.getElementById('lobby').style.display = 'none';
+            document.getElementById('start-screen').style.display = 'none';
+            document.getElementById('hud').style.display = 'flex';
+            
+            gameActive = true;
+            document.activeElement.blur();
+            window.focus();
+            
+            updateChunks();
+            requestPointerLock();
+        }
+
+        function deleteWorld(saveId) {
+            let saves = JSON.parse(localStorage.getItem('survivalism_saves') || '[]');
+            saves = saves.filter(s => s.id !== saveId);
+            localStorage.setItem('survivalism_saves', JSON.stringify(saves));
+            renderSavesList();
+        }
+
+        function renderSavesList() {
+            const savesContainer = document.getElementById('saves-list');
+            if (!savesContainer) return;
+            
+            const saves = JSON.parse(localStorage.getItem('survivalism_saves') || '[]');
+            if (saves.length === 0) {
+                savesContainer.innerHTML = `<div style="text-align: center; color: #5a6070; padding: 30px; font-size: 0.9rem; border: 1px dashed rgba(255,255,255,0.05); border-radius: 10px;">No saved worlds yet. Create one to begin!</div>`;
+                return;
+            }
+            
+            savesContainer.innerHTML = '';
+            saves.forEach(save => {
+                const item = document.createElement('div');
+                item.className = 'save-item';
+                
+                const info = document.createElement('div');
+                info.className = 'save-info';
+                
+                const name = document.createElement('div');
+                name.className = 'save-name';
+                name.innerText = save.worldName;
+                
+                const details = document.createElement('div');
+                details.className = 'save-details';
+                details.innerText = `${save.mode === 'freedom' ? 'Freedom Mode' : 'Survival Mode'} • ${save.date}`;
+                
+                info.appendChild(name);
+                info.appendChild(details);
+                
+                const buttons = document.createElement('div');
+                buttons.className = 'save-buttons';
+                
+                const playBtn = document.createElement('button');
+                playBtn.className = 'btn-save-play';
+                playBtn.innerText = 'Play';
+                playBtn.addEventListener('click', () => {
+                    loadWorld(save.id);
+                });
+                
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'btn-save-delete';
+                deleteBtn.innerText = 'Delete';
+                deleteBtn.addEventListener('click', () => {
+                    if (confirm(`Are you sure you want to delete "${save.worldName}"?`)) {
+                        deleteWorld(save.id);
+                    }
+                });
+                
+                buttons.appendChild(playBtn);
+                buttons.appendChild(deleteBtn);
+                
+                item.appendChild(info);
+                item.appendChild(buttons);
+                savesContainer.appendChild(item);
+            });
+        }
+
+        function updateCheatsUIState() {
+            const btnNewDisabled = document.getElementById('btn-cheats-disabled');
+            const btnNewEnabled = document.getElementById('btn-cheats-enabled');
+            const btnInGameDisabled = document.getElementById('btn-ingame-cheats-disabled');
+            const btnInGameEnabled = document.getElementById('btn-ingame-cheats-enabled');
+            
+            if (cheatsEnabled) {
+                if (btnNewDisabled) { btnNewDisabled.classList.remove('active'); btnNewDisabled.style.borderColor = 'rgba(255,255,255,0.1)'; btnNewDisabled.style.background = 'rgba(255,255,255,0.02)'; btnNewDisabled.style.color = '#8a90a0'; }
+                if (btnNewEnabled) { btnNewEnabled.classList.add('active'); btnNewEnabled.style.borderColor = 'var(--cyan)'; btnNewEnabled.style.background = 'rgba(0, 240, 255, 0.1)'; btnNewEnabled.style.color = 'var(--cyan)'; }
+                if (btnInGameDisabled) { btnInGameDisabled.classList.remove('active'); btnInGameDisabled.style.borderColor = 'rgba(255,255,255,0.1)'; btnInGameDisabled.style.background = 'rgba(255,255,255,0.02)'; btnInGameDisabled.style.color = '#8a90a0'; }
+                if (btnInGameEnabled) { btnInGameEnabled.classList.add('active'); btnInGameEnabled.style.borderColor = 'var(--cyan)'; btnInGameEnabled.style.background = 'rgba(0, 240, 255, 0.1)'; btnInGameEnabled.style.color = 'var(--cyan)'; }
+            } else {
+                if (btnNewDisabled) { btnNewDisabled.classList.add('active'); btnNewDisabled.style.borderColor = 'var(--cyan)'; btnNewDisabled.style.background = 'rgba(0, 240, 255, 0.1)'; btnNewDisabled.style.color = 'var(--cyan)'; }
+                if (btnNewEnabled) { btnNewEnabled.classList.remove('active'); btnNewEnabled.style.borderColor = 'rgba(255,255,255,0.1)'; btnNewEnabled.style.background = 'rgba(255,255,255,0.02)'; btnNewEnabled.style.color = '#8a90a0'; }
+                if (btnInGameDisabled) { btnInGameDisabled.classList.add('active'); btnInGameDisabled.style.borderColor = 'var(--cyan)'; btnInGameDisabled.style.background = 'rgba(0, 240, 255, 0.1)'; btnInGameDisabled.style.color = 'var(--cyan)'; }
+                if (btnInGameEnabled) { btnInGameEnabled.classList.remove('active'); btnInGameEnabled.style.borderColor = 'rgba(255,255,255,0.1)'; btnInGameEnabled.style.background = 'rgba(255,255,255,0.02)'; btnInGameEnabled.style.color = '#8a90a0'; }
+            }
+        }
+
         // Rematches
         let rematchRequestSent = false;
         let rematchRequestReceived = false;
@@ -5153,8 +6161,26 @@ export function initNeonBruiser(): Cleanup {
             hotbarCounts[1] = 1;
             inventoryItems = new Array(27).fill(null);
             inventoryCounts = new Array(27).fill(0);
+            armorItems = {
+                helmet: null,
+                chestplate: null,
+                leggings: null,
+                gauntlets: null,
+                boots: null
+            };
+            armorItems = {
+                helmet: null,
+                chestplate: null,
+                leggings: null,
+                gauntlets: null,
+                boots: null
+            };
             selectedHotbarIndex = 0;
             clearPlacedObjects();
+            worldCorals = [];
+            minedCoralCoords = new Set();
+            activeChest = null;
+            chestUIOpen = false;
             updateHotbarUI();
             updateInventoryUI();
             clearAnimals();
@@ -5561,7 +6587,11 @@ export function initNeonBruiser(): Cleanup {
                                 }
                             } else {
                                 mesh.isHissing = false;
-                                mesh.scale.set(1, 1, 1);
+                                if (mesh.zombieType === 'error404') {
+                                    mesh.scale.set(4, 4, 4);
+                                } else {
+                                    mesh.scale.set(1, 1, 1);
+                                }
                                 
                                 const walkSpeed = 10;
                                 if (mesh.zombieType === 'creeper') {
@@ -5910,6 +6940,14 @@ export function initNeonBruiser(): Cleanup {
                         if (Math.random() < 0.015) {
                             AudioSynth.playBuzz(mesh.position);
                         }
+                        if (mesh.children[1] && mesh.children[2]) {
+                            // Only flap wings if the bee is alive (not rotated upside down)
+                            if (Math.abs(mesh.rotation.x - Math.PI) > 0.01) {
+                                const t = Date.now();
+                                mesh.children[1].rotation.z = Math.sin(t * 0.08) * 0.6;
+                                mesh.children[2].rotation.z = -Math.sin(t * 0.08) * 0.6;
+                            }
+                        }
                     });
                 }
                 
@@ -5928,15 +6966,16 @@ export function initNeonBruiser(): Cleanup {
             }
 
             if (gameActive && myHealth > 0) {
-
                 updatePlayerPhysics(delta);
                 updateFirstPersonAnimations(delta);
+                updatePlacementPreview(); // Update block placement outline preview
                 checkTrashCans();
                 
                 // Turret Proximity HUD prompt & Camera lock updates
                 updateTurretState(delta);
 
                 updatePlayerBurning(delta);
+                updateContinuousMining(delta);
             }
 
             if (gameActive) {
@@ -5945,6 +6984,11 @@ export function initNeonBruiser(): Cleanup {
                 updateAnimals(delta);
                 updateDroppedFoods(delta);
                 updateHunger(delta);
+                updateFurnaces(delta);
+                updateBlockCracksDecay(delta);
+                updateFishing(delta);
+                updateFallingBlocks(delta);
+                updateDebrisParticles(delta);
             }
 
             if (isConnected) {
@@ -5961,6 +7005,7 @@ export function initNeonBruiser(): Cleanup {
             }
 
             updateFireParticles(delta);
+            updateEatingParticles(delta);
 
             if (mapOpen) {
                 drawRadarMap();
@@ -5970,9 +7015,46 @@ export function initNeonBruiser(): Cleanup {
             camHitRecoil.lerp(new THREE.Vector3(), 0.15);
             camHitTilt = THREE.MathUtils.lerp(camHitTilt, 0, 0.15);
 
+            // Save original camera position & rotation
+            const originalCamPos = camera.position.clone();
+            const originalCamRotX = camera.rotation.x;
+            const originalCamRotY = camera.rotation.y;
+
             // Apply visual offsets to camera and zombies before rendering
             camera.position.add(camHitRecoil);
             camera.rotation.x += camHitTilt;
+
+            // Update player model position & rotation (feet is 1.6m below head camera position)
+            if (playerMeshGroup) {
+                const px = originalCamPos.x;
+                const py = originalCamPos.y - 1.6;
+                const pz = originalCamPos.z;
+                
+                playerMeshGroup.position.set(px, py, pz);
+                playerMeshGroup.rotation.y = originalCamRotY;
+                
+                if (playerHead) {
+                    playerHead.rotation.x = originalCamRotX;
+                }
+                
+                // Animate arms & legs if moving
+                const isMoving = moveForces.forward || moveForces.backward || moveForces.left || moveForces.right;
+                if (isMoving) {
+                    const walkSpeed = 10;
+                    const legAngle = Math.sin(time * walkSpeed) * 0.5;
+                    if (playerLArm) playerLArm.rotation.x = -legAngle;
+                    if (playerRArm) playerRArm.rotation.x = legAngle;
+                    if (playerLLeg) playerLLeg.rotation.x = legAngle;
+                    if (playerRLeg) playerRLeg.rotation.x = -legAngle;
+                } else {
+                    if (playerLArm) playerLArm.rotation.x = 0;
+                    if (playerRArm) playerRArm.rotation.x = 0;
+                    if (playerLLeg) playerLLeg.rotation.x = 0;
+                    if (playerRLeg) playerRLeg.rotation.x = 0;
+                }
+            }
+
+            if (playerMeshGroup) playerMeshGroup.visible = false;
 
             for (let [mesh, r] of zombieRecoilMap) {
                 r.pos.lerp(new THREE.Vector3(), 0.15);
@@ -5983,9 +7065,9 @@ export function initNeonBruiser(): Cleanup {
 
             renderer.render(scene, camera);
 
-            // Reset visual offsets immediately after rendering to keep physics clean
-            camera.position.sub(camHitRecoil);
-            camera.rotation.x -= camHitTilt;
+            // Restore camera position & rotation immediately after rendering to keep physics clean
+            camera.position.copy(originalCamPos);
+            camera.rotation.set(originalCamRotX, originalCamRotY, camera.rotation.z);
 
             for (let [mesh, r] of zombieRecoilMap) {
                 mesh.position.sub(r.pos);
@@ -6825,8 +7907,30 @@ export function initNeonBruiser(): Cleanup {
             knockbackVel.x -= knockbackVel.x * 4.5 * delta;
             knockbackVel.z -= knockbackVel.z * 4.5 * delta;
 
-            // Gravity & buoyant floating
-            if (isPlayerInWater) {
+            // Ladder detection
+            let nearLadder = false;
+            placedObjects.forEach(obj => {
+                if (obj.type === 'ladder') {
+                    const dx = camera.position.x - obj.pos.x;
+                    const dz = camera.position.z - obj.pos.z;
+                    const distXZ = Math.sqrt(dx * dx + dz * dz);
+                    const py = camera.position.y - 1.6;
+                    const oy = obj.pos.y;
+                    if (distXZ < 0.8 && py >= oy - 0.2 && py <= oy + 1.2) {
+                        nearLadder = true;
+                    }
+                }
+            });
+
+            // Gravity & buoyant floating & ladder climbing
+            if (nearLadder) {
+                if (moveForces.jump) {
+                    velocity.y = 3.5; // Climb up
+                } else {
+                    velocity.y = Math.max(-1.5, velocity.y * 0.4); // Slide down slowly
+                }
+                isGrounded = true;
+            } else if (isPlayerInWater) {
                 // Gravity is weaker in water (buoyant effect)
                 velocity.y -= 9.8 * 0.4 * delta;
                 // Vertical drag
@@ -6857,8 +7961,15 @@ export function initNeonBruiser(): Cleanup {
             moveRight(-totalVX * delta);
             moveForward(-totalVZ * delta);
 
+            let groundedThisFrame = nearLadder;
+            let stepUpY = -Infinity;
+            let shouldStepUp = false;
+
             // Check collision with placed blocks
             placedObjects.forEach(obj => {
+                if (obj.type === 'ladder') return; // Ladders do not block player movement horizontally
+                if (obj.type === 'door' && obj.isOpen) return; // Open doors do not block player
+
                 const px = camera.position.x;
                 const pz = camera.position.z;
                 const ox = obj.pos.x;
@@ -6876,9 +7987,45 @@ export function initNeonBruiser(): Cleanup {
                 
                 const py = camera.position.y - 1.6;
                 const oy = obj.pos.y;
-                const height = (obj.type === 'crafting_bench') ? 1.0 : 0.9;
+                const height = (obj.type === 'crafting_bench') ? 1.0 : (obj.type === 'door' ? 1.8 : (obj.type === 'stone_slab' ? 0.45 : 0.9));
                 
                 if (dx < limitX && dz < limitZ && py < oy + height && py + 1.8 > oy) {
+                    const stepHeight = (oy + height) - py;
+                    if (stepHeight > 0 && stepHeight <= 1.05) {
+                        // Check if player's body would collide with anything at the stepped-up position
+                        let wouldCollide = false;
+                        const testPy = oy + height;
+                        for (let k = 0; k < placedObjects.length; k++) {
+                            const o2 = placedObjects[k];
+                            if (o2 === obj) continue;
+                            if (o2.type === 'ladder') continue;
+                            if (o2.type === 'door' && o2.isOpen) continue;
+                            
+                            const o2WidthX = (o2.type === 'crafting_bench') ? 1.6 : 0.9;
+                            const o2WidthZ = (o2.type === 'crafting_bench') ? 0.7 : 0.9;
+                            const o2LimitX = o2WidthX / 2 + playerRadius;
+                            const o2LimitZ = o2WidthZ / 2 + playerRadius;
+                            const o2Height = (o2.type === 'crafting_bench') ? 1.0 : (o2.type === 'door' ? 1.8 : (o2.type === 'stone_slab' ? 0.45 : 0.9));
+                            
+                            const o2dx = Math.abs(px - o2.pos.x);
+                            const o2dz = Math.abs(pz - o2.pos.z);
+                            const o2py = o2.pos.y;
+                            
+                            if (o2dx < o2LimitX && o2dz < o2LimitZ && testPy < o2py + o2Height && testPy + 1.8 > o2py) {
+                                wouldCollide = true;
+                                break;
+                            }
+                        }
+                        
+                        if (!wouldCollide) {
+                            shouldStepUp = true;
+                            if (oy + height > stepUpY) {
+                                stepUpY = oy + height;
+                            }
+                            return; // skip horizontal resolution pushback for this block
+                        }
+                    }
+                    
                     const penX = limitX - dx;
                     const penZ = limitZ - dz;
                     
@@ -6900,15 +8047,85 @@ export function initNeonBruiser(): Cleanup {
                 }
             });
 
+            if (shouldStepUp) {
+                camera.position.y = stepUpY + 1.6;
+                velocity.y = 0;
+                groundedThisFrame = true;
+            }
+
             camera.position.y += velocity.y * delta;
+
+            // Resolve vertical AABB collision with placed blocks (grounding & head bump)
+            placedObjects.forEach(obj => {
+                if (obj.type === 'ladder') return;
+                if (obj.type === 'door' && obj.isOpen) return;
+
+                const px = camera.position.x;
+                const pz = camera.position.z;
+                const ox = obj.pos.x;
+                const oz = obj.pos.z;
+
+                const widthX = (obj.type === 'crafting_bench') ? 1.6 : 0.9;
+                const widthZ = (obj.type === 'crafting_bench') ? 0.7 : 0.9;
+                const playerRadius = 0.4;
+
+                const dx = Math.abs(px - ox);
+                const dz = Math.abs(pz - oz);
+
+                const limitX = widthX / 2 + playerRadius;
+                const limitZ = widthZ / 2 + playerRadius;
+
+                if (dx < limitX && dz < limitZ) {
+                    const py = camera.position.y - 1.6;
+                    const oy = obj.pos.y;
+                    const height = (obj.type === 'crafting_bench') ? 1.0 : (obj.type === 'door' ? 1.8 : (obj.type === 'stone_slab' ? 0.45 : 0.9));
+
+                    // Falling onto block (grounding)
+                    if (velocity.y <= 0) {
+                        if (py >= oy + height - 0.3 && py < oy + height) {
+                            camera.position.y = oy + height + 1.6;
+                            velocity.y = 0;
+                            groundedThisFrame = true;
+                        }
+                    }
+                    // Jumping into block from below (head bump)
+                    else if (velocity.y > 0) {
+                        if (py + 1.8 > oy && py + 1.8 < oy + 0.3) {
+                            camera.position.y = oy - 0.201; // snap head to bottom of block
+                            velocity.y = 0;
+                        }
+                    }
+                }
+            });
 
             // Snap Y coordinate to heightmapped terrain Y
             const terrainY = getTerrainHeight(camera.position.x, camera.position.z, playerInCave);
             if (camera.position.y < terrainY + 1.6) {
                 velocity.y = 0;
                 camera.position.y = terrainY + 1.6;
-                isGrounded = true;
+                groundedThisFrame = true;
             }
+
+            if (groundedThisFrame) {
+                if (!isGrounded) {
+                    const fallDistance = highestYSinceGrounded - camera.position.y;
+                    if (fallDistance >= 3.0) {
+                        if (!isPlayerInWater && !nearLadder && currentGameMode !== 'freedom' && !ridingBoat && !inTurret && !inBush) {
+                            const damage = Math.round((fallDistance - 3.0) * 15);
+                            if (damage > 0) {
+                                takeDamage(damage, 0, 0, "Fell from a high place");
+                            }
+                        }
+                    }
+                }
+                highestYSinceGrounded = camera.position.y;
+            } else {
+                if (camera.position.y > highestYSinceGrounded) {
+                    highestYSinceGrounded = camera.position.y;
+                }
+            }
+
+            isGrounded = groundedThisFrame;
 
             // Ceiling collision inside cave
             if (playerInCave) {
@@ -7166,7 +8383,7 @@ export function initNeonBruiser(): Cleanup {
                         if (a.health <= 0) {
                             a.isDead = true;
                             a.deathTime = 0;
-                            spawnDroppedFood(getFoodTypeForAnimal(a.type), a.mesh.position);
+                            handleAnimalDeathDrops(a);
                         }
                         
                         if (isConnected) {
@@ -7399,6 +8616,101 @@ export function initNeonBruiser(): Cleanup {
                     if (villagerHit) continue;
                 }
             }
+
+            // 6. Host-side error404 projectiles (physics and damage)
+            if (isHost) {
+                for (let i = errorProjectiles.length - 1; i >= 0; i--) {
+                    const p = errorProjectiles[i];
+                    p.pos.addScaledVector(p.vel, delta);
+                    p.mesh.position.copy(p.pos);
+                    
+                    const terrainY = getTerrainHeight(p.pos.x, p.pos.z);
+                    if (p.pos.y < terrainY) {
+                        scene.remove(p.mesh);
+                        errorProjectiles.splice(i, 1);
+                        continue;
+                    }
+                    
+                    // Check hit against local player (host)
+                    const px = camera.position.x;
+                    const py = camera.position.y;
+                    const pz = camera.position.z;
+                    const distToHost = p.pos.distanceTo(new THREE.Vector3(px, py - 0.5, pz));
+                    if (distToHost < 2.2) {
+                        const kVel = p.vel.clone().normalize().multiplyScalar(15.0);
+                        takeDamage(25, kVel.x, kVel.z, "Blasted by error404!");
+                        scene.remove(p.mesh);
+                        errorProjectiles.splice(i, 1);
+                        continue;
+                    }
+                    
+                    // Check hit against client player (opponent)
+                    if (opponentGroup && oppHealth > 0 && isConnected) {
+                        const ox = opponentGroup.position.x;
+                        const oy = opponentGroup.position.y;
+                        const oz = opponentGroup.position.z;
+                        const distToClient = p.pos.distanceTo(new THREE.Vector3(ox, oy + 1.0, oz));
+                        if (distToClient < 2.2) {
+                            const kVel = p.vel.clone().normalize().multiplyScalar(15.0);
+                            sendNetworkMessage({
+                                type: 'zombie-hit',
+                                damage: 25,
+                                kx: kVel.x,
+                                kz: kVel.z
+                            });
+                            scene.remove(p.mesh);
+                            errorProjectiles.splice(i, 1);
+                            continue;
+                        }
+                    }
+                    
+                    // Check hit against villagers
+                    let villagerHit = false;
+                    for (let j = villagers.length - 1; j >= 0; j--) {
+                        const v = villagers[j];
+                        if (v.isDead) continue;
+                        const vChestPos = v.mesh.position.clone().add(new THREE.Vector3(0, 1.0, 0));
+                        const distToVillager = p.pos.distanceTo(vChestPos);
+                        if (distToVillager < 2.2) {
+                            villagerHit = true;
+                            const kVel = p.vel.clone().normalize().multiplyScalar(15.0);
+                            v.health = Math.max(0, v.health - 25);
+                            v.kx = kVel.x;
+                            v.kz = kVel.z;
+                            flashVillagerRed(v.mesh);
+                            if (v.health <= 0) {
+                                v.isDead = true;
+                                v.deathTime = 0;
+                            }
+                            
+                            sendNetworkMessage({
+                                type: 'damage-villager',
+                                id: v.id,
+                                damage: 25,
+                                kx: kVel.x,
+                                kz: kVel.z
+                            });
+                            scene.remove(p.mesh);
+                            errorProjectiles.splice(i, 1);
+                            break;
+                        }
+                    }
+                    if (villagerHit) continue;
+                }
+            }
+
+            // 7. Peer-side error404 projectiles (visuals only)
+            for (let i = peerErrorProjectiles.length - 1; i >= 0; i--) {
+                const p = peerErrorProjectiles[i];
+                p.pos.addScaledVector(p.vel, delta);
+                p.mesh.position.copy(p.pos);
+                
+                const terrainY = getTerrainHeight(p.pos.x, p.pos.z);
+                if (p.pos.y < terrainY) {
+                    scene.remove(p.mesh);
+                    peerErrorProjectiles.splice(i, 1);
+                }
+            }
         }
 
         // Local FP hands and weapons animations
@@ -7407,8 +8719,51 @@ export function initNeonBruiser(): Cleanup {
             firstPersonHands.position.y = Math.sin(t * 2.5) * 0.01;
             firstPersonHands.position.x = Math.cos(t * 1.25) * 0.005;
 
-            // Punch Fists Animation
-            if (localPunching) {
+            // Eating Food Animation
+            if (isEating) {
+                const currentItem = hotbarItems[selectedHotbarIndex];
+                if (!currentItem || !['porkchop', 'beef', 'mutton', 'chicken', 'raw_fish'].includes(currentItem)) {
+                    isEating = false;
+                    rightHand.position.set(0.35, -0.3, -0.7);
+                    rightHand.rotation.set(0, 0, 0);
+                } else {
+                    eatingTimer += delta;
+                    eatingSoundTimer += delta;
+                    if (eatingSoundTimer >= 0.25) {
+                        AudioSynth.playEating();
+                        eatingSoundTimer = 0;
+                        spawnEatingParticles(currentItem);
+                    }
+
+                    // Chewing movement & rotation toward mouth
+                    const targetX = 0.1;
+                    const targetY = -0.15;
+                    const targetZ = -0.45;
+                    
+                    const chewingShakeY = Math.sin(eatingTimer * 35) * 0.03;
+                    const chewingShakeX = Math.cos(eatingTimer * 20) * 0.015;
+                    const chewingShakeZ = Math.sin(eatingTimer * 25) * 0.02;
+                    
+                    rightHand.position.set(
+                        targetX + chewingShakeX,
+                        targetY + chewingShakeY,
+                        targetZ + chewingShakeZ
+                    );
+                    
+                    rightHand.rotation.set(
+                        0.5 + Math.sin(eatingTimer * 30) * 0.15,
+                        -0.2,
+                        -0.4
+                    );
+
+                    if (eatingTimer >= EAT_DURATION) {
+                        isEating = false;
+                        triggerEatFood();
+                        rightHand.position.set(0.35, -0.3, -0.7);
+                        rightHand.rotation.set(0, 0, 0);
+                    }
+                }
+            } else if (localPunching) {
                 localPunchTimer += delta * 7;
                 if (localPunchTimer >= 1.0) {
                     localPunching = false;
@@ -7726,8 +9081,481 @@ export function initNeonBruiser(): Cleanup {
             }
         }
 
+        function playWaterSplashSound(pos) {
+            AudioSynth.init();
+            if (!AudioSynth.ctx) return;
+            const now = AudioSynth.ctx.currentTime;
+            const vol = AudioSynth.getSpatialVolume(pos, 60);
+            if (vol <= 0.01) return;
+            
+            const osc = AudioSynth.ctx.createOscillator();
+            const gain = AudioSynth.ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(600, now);
+            osc.frequency.exponentialRampToValueAtTime(150, now + 0.35);
+            gain.gain.setValueAtTime(0.35 * vol, now);
+            gain.gain.exponentialRampToValueAtTime(0.005, now + 0.35);
+            
+            osc.connect(gain);
+            gain.connect(AudioSynth.ctx.destination);
+            osc.start();
+            osc.stop(now + 0.4);
+        }
+
+        function playFishingCatchSound(pos) {
+            AudioSynth.init();
+            if (!AudioSynth.ctx) return;
+            const now = AudioSynth.ctx.currentTime;
+            const vol = AudioSynth.getSpatialVolume(pos, 60);
+            if (vol <= 0.01) return;
+            
+            const osc = AudioSynth.ctx.createOscillator();
+            const gain = AudioSynth.ctx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(400, now);
+            osc.frequency.exponentialRampToValueAtTime(900, now + 0.25);
+            gain.gain.setValueAtTime(0.25 * vol, now);
+            gain.gain.exponentialRampToValueAtTime(0.005, now + 0.25);
+            
+            osc.connect(gain);
+            gain.connect(AudioSynth.ctx.destination);
+            osc.start();
+            osc.stop(now + 0.3);
+        }
+
+        function cleanupBobber() {
+            if (!activeBobber) return;
+            scene.remove(activeBobber.mesh);
+            scene.remove(activeBobber.lineMesh);
+            if (activeBobber.fishMesh) {
+                scene.remove(activeBobber.fishMesh);
+            }
+            activeBobber = null;
+        }
+
+        function castFishingLine() {
+            if (!isRodBaited) {
+                addChatMessage("Your fishing rod is not baited! Press E to bait it with String.", "system");
+                return;
+            }
+            
+            const geom = new THREE.SphereGeometry(0.08, 16, 16);
+            const redMat = new THREE.MeshStandardMaterial({ color: 0xff0000, roughness: 0.5 });
+            const whiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 });
+            
+            const bobberGroup = new THREE.Group();
+            const topHalf = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), redMat);
+            const bottomHalf = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 8, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), whiteMat);
+            bobberGroup.add(topHalf);
+            bobberGroup.add(bottomHalf);
+            
+            const cameraDir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+            const spawnPos = camera.position.clone().addScaledVector(cameraDir, 1.2);
+            bobberGroup.position.copy(spawnPos);
+            scene.add(bobberGroup);
+            
+            const lineMat = new THREE.LineBasicMaterial({ color: 0xcccccc });
+            const lineGeom = new THREE.BufferGeometry().setFromPoints([spawnPos, spawnPos]);
+            const lineMesh = new THREE.Line(lineGeom, lineMat);
+            scene.add(lineMesh);
+            
+            const castVel = cameraDir.clone().multiplyScalar(15.0);
+            castVel.y += 4.5;
+            
+            activeBobber = {
+                mesh: bobberGroup,
+                lineMesh: lineMesh,
+                state: 'flying',
+                pos: spawnPos,
+                vel: castVel,
+                fishMesh: null,
+                fishTimer: 2.0 + Math.random() * 4.0,
+                biteTimer: 0,
+                fishSwimAngle: 0,
+                fishSwimRadius: 2.0
+            };
+            
+            AudioSynth.playWhoosh();
+            addChatMessage("Cast the fishing line!", "system");
+        }
+
+        function reelFishingLine() {
+            if (!activeBobber) return;
+            
+            if (activeBobber.state === 'biting') {
+                const isJumpingBack = moveForces.backward && !isGrounded;
+                
+                if (isJumpingBack) {
+                    playFishingCatchSound(activeBobber.pos);
+                    addChatMessage("You hooked a fish! Pulling it in!", "system");
+                    
+                    const fishMat = new THREE.MeshStandardMaterial({ color: 0xffaa00, roughness: 0.8 });
+                    const fishGroup = new THREE.Group();
+                    const body = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.04, 0.25), fishMat);
+                    fishGroup.add(body);
+                    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.08, 0.08), fishMat);
+                    tail.position.z = -0.15;
+                    fishGroup.add(tail);
+                    
+                    fishGroup.position.copy(activeBobber.pos);
+                    scene.add(fishGroup);
+                    
+                    flyingFish = {
+                        mesh: fishGroup,
+                        start: activeBobber.pos.clone(),
+                        progress: 0
+                    };
+                } else {
+                    addChatMessage("The fish got away! You must jump backwards while reeling in to pull it out!", "system");
+                }
+            } else {
+                addChatMessage("Reeled in the line.", "system");
+            }
+            
+            cleanupBobber();
+            isRodBaited = false;
+        }
+
+        function doObjectsTouch(a, b) {
+            const aWidthX = (a.type === 'crafting_bench') ? 1.6 : 0.9;
+            const aWidthZ = (a.type === 'crafting_bench') ? 0.7 : 0.9;
+            const aHeight = (a.type === 'crafting_bench') ? 1.0 : (a.type === 'door' ? 1.8 : (a.type === 'stone_slab' ? 0.45 : 0.9));
+            
+            const bWidthX = (b.type === 'crafting_bench') ? 1.6 : 0.9;
+            const bWidthZ = (b.type === 'crafting_bench') ? 0.7 : 0.9;
+            const bHeight = (b.type === 'crafting_bench') ? 1.0 : (b.type === 'door' ? 1.8 : (b.type === 'stone_slab' ? 0.45 : 0.9));
+
+            const aMinX = a.pos.x - aWidthX / 2 - 0.05;
+            const aMaxX = a.pos.x + aWidthX / 2 + 0.05;
+            const aMinZ = a.pos.z - aWidthZ / 2 - 0.05;
+            const aMaxZ = a.pos.z + aWidthZ / 2 + 0.05;
+            const aMinY = a.pos.y - 0.05;
+            const aMaxY = a.pos.y + aHeight + 0.05;
+
+            const bMinX = b.pos.x - bWidthX / 2;
+            const bMaxX = b.pos.x + bWidthX / 2;
+            const bMinZ = b.pos.z - bWidthZ / 2;
+            const bMaxZ = b.pos.z + bWidthZ / 2;
+            const bMinY = b.pos.y;
+            const bMaxY = b.pos.y + bHeight;
+
+            return (aMinX <= bMaxX && aMaxX >= bMinX) &&
+                   (aMinZ <= bMaxZ && aMaxZ >= bMinZ) &&
+                   (aMinY <= bMaxY && aMaxY >= bMinY);
+        }
+
+        function isObjectOnGround(obj) {
+            const terrainH = getTerrainHeight(obj.pos.x, obj.pos.z, false);
+            return obj.pos.y <= terrainH + 0.15;
+        }
+
+        function checkStructuralPhysics() {
+            if (!structuralPhysicsEnabled) {
+                placedObjects.forEach(obj => {
+                    obj.mesh.position.copy(obj.pos);
+                    obj.mesh.rotation.set(0, obj.initialRotationY || 0, 0);
+                });
+                return;
+            }
+
+            placedObjects.forEach(obj => {
+                obj.supported = false;
+                obj.distanceFromGround = Infinity;
+            });
+
+            const queue = [];
+            placedObjects.forEach(obj => {
+                if (isObjectOnGround(obj)) {
+                    obj.supported = true;
+                    obj.distanceFromGround = 0;
+                    queue.push(obj);
+                }
+            });
+
+            while (queue.length > 0) {
+                const curr = queue.shift();
+                placedObjects.forEach(neighbor => {
+                    if (neighbor === curr) return;
+                    if (doObjectsTouch(curr, neighbor)) {
+                        const newDist = curr.distanceFromGround + 1;
+                        if (!neighbor.supported || newDist < neighbor.distanceFromGround) {
+                            neighbor.supported = true;
+                            neighbor.distanceFromGround = newDist;
+                            queue.push(neighbor);
+                        }
+                    }
+                });
+            }
+
+            const unsupported = [];
+            for (let i = placedObjects.length - 1; i >= 0; i--) {
+                const obj = placedObjects[i];
+                if (!obj.supported) {
+                    placedObjects.splice(i, 1);
+                    unsupported.push(obj);
+                }
+            }
+
+            unsupported.forEach(obj => {
+                fallingBlocks.push({
+                    mesh: obj.mesh,
+                    pos: obj.pos.clone(),
+                    velY: 0,
+                    type: obj.type,
+                    originalObj: obj
+                });
+            });
+
+            placedObjects.forEach(obj => {
+                if (obj.supported) {
+                    const sagFactor = Math.min(0.12, obj.distanceFromGround * 0.015);
+                    obj.mesh.position.copy(obj.pos);
+                    obj.mesh.position.y -= sagFactor;
+                    obj.mesh.rotation.x = Math.sin(obj.pos.z) * sagFactor * 0.4;
+                    obj.mesh.rotation.z = Math.cos(obj.pos.x) * sagFactor * 0.4;
+                }
+            });
+        }
+
+        function spawnDebrisParticles(position, blockType, count = 10) {
+            let color = 0x8b5a2b;
+            if (blockType.includes('stone') || blockType.includes('furnace')) {
+                color = 0x777777;
+            } else if (blockType.includes('wool') || blockType.includes('bed')) {
+                color = 0xdddddd;
+            } else if (blockType.includes('planks') || blockType.includes('crafting') || blockType.includes('chest')) {
+                color = 0xa0522d;
+            }
+            
+            for (let i = 0; i < count; i++) {
+                const size = 0.05 + Math.random() * 0.08;
+                const geo = new THREE.BoxGeometry(size, size, size);
+                const mat = new THREE.MeshStandardMaterial({
+                    color: color,
+                    roughness: 0.9,
+                    transparent: true,
+                    opacity: 0.9
+                });
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.position.copy(position);
+                mesh.position.x += (Math.random() - 0.5) * 0.5;
+                mesh.position.y += Math.random() * 0.5;
+                mesh.position.z += (Math.random() - 0.5) * 0.5;
+                
+                scene.add(mesh);
+                
+                debrisParticles.push({
+                    mesh: mesh,
+                    mat: mat,
+                    velY: (Math.random() - 0.2) * 2.0,
+                    velX: (Math.random() - 0.5) * 1.5,
+                    velZ: (Math.random() - 0.5) * 1.5,
+                    life: 0.4 + Math.random() * 0.4
+                });
+            }
+        }
+
+        function updateDebrisParticles(delta) {
+            for (let i = debrisParticles.length - 1; i >= 0; i--) {
+                const p = debrisParticles[i];
+                p.life -= delta;
+                if (p.life <= 0) {
+                    scene.remove(p.mesh);
+                    debrisParticles.splice(i, 1);
+                } else {
+                    p.velY -= 9.8 * delta;
+                    p.mesh.position.y += p.velY * delta;
+                    p.mesh.position.x += p.velX * delta;
+                    p.mesh.position.z += p.velZ * delta;
+                    p.mat.opacity = p.life / 0.8;
+                }
+            }
+        }
+
+        function updateFallingBlocks(delta) {
+            for (let i = fallingBlocks.length - 1; i >= 0; i--) {
+                const fb = fallingBlocks[i];
+                fb.velY -= 9.8 * delta;
+                fb.pos.y += fb.velY * delta;
+                fb.mesh.position.copy(fb.pos);
+                
+                fb.mesh.rotation.x += delta * 2.0;
+                fb.mesh.rotation.z += delta * 1.5;
+
+                const terrainH = getTerrainHeight(fb.pos.x, fb.pos.z, false);
+                
+                if (fb.pos.y <= terrainH) {
+                    fb.pos.y = terrainH;
+                    fb.originalObj.pos.copy(fb.pos);
+                    fb.originalObj.mesh.position.copy(fb.pos);
+                    fb.originalObj.mesh.rotation.set(0, fb.originalObj.initialRotationY || 0, 0);
+                    placedObjects.push(fb.originalObj);
+                    
+                    AudioSynth.playHit(fb.pos);
+                    fallingBlocks.splice(i, 1);
+                    checkStructuralPhysics();
+                    continue;
+                }
+
+                let hitBlock = false;
+                for (let j = 0; j < placedObjects.length; j++) {
+                    const other = placedObjects[j];
+                    const otherWidthX = (other.type === 'crafting_bench') ? 1.6 : 0.9;
+                    const otherWidthZ = (other.type === 'crafting_bench') ? 0.7 : 0.9;
+                    const otherHeight = (other.type === 'crafting_bench') ? 1.0 : (other.type === 'door' ? 1.8 : (other.type === 'stone_slab' ? 0.45 : 0.9));
+                    
+                    const minX = other.pos.x - otherWidthX / 2;
+                    const maxX = other.pos.x + otherWidthX / 2;
+                    const minZ = other.pos.z - otherWidthZ / 2;
+                    const maxZ = other.pos.z + otherWidthZ / 2;
+                    
+                    if (fb.pos.x >= minX && fb.pos.x <= maxX && fb.pos.z >= minZ && fb.pos.z <= maxZ) {
+                        if (fb.pos.y <= other.pos.y + otherHeight && fb.pos.y >= other.pos.y) {
+                            fb.pos.y = other.pos.y + otherHeight;
+                            fb.originalObj.pos.copy(fb.pos);
+                            fb.originalObj.mesh.position.copy(fb.pos);
+                            fb.originalObj.mesh.rotation.set(0, fb.originalObj.initialRotationY || 0, 0);
+                            placedObjects.push(fb.originalObj);
+                            
+                            AudioSynth.playHit(fb.pos);
+                            fallingBlocks.splice(i, 1);
+                            checkStructuralPhysics();
+                            hitBlock = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (hitBlock) continue;
+
+                if (fb.pos.y < -30) {
+                    spawnDebrisParticles(fb.pos, fb.type, 15);
+                    scene.remove(fb.mesh);
+                    fallingBlocks.splice(i, 1);
+                }
+            }
+        }
+
+        function updateFishing(delta) {
+            if (activeBobber) {
+                if (activeBobber.state === 'flying') {
+                    activeBobber.vel.y -= 9.8 * delta;
+                    activeBobber.pos.addScaledVector(activeBobber.vel, delta);
+                    activeBobber.mesh.position.copy(activeBobber.pos);
+                    
+                    const terrainH = getTerrainHeight(activeBobber.pos.x, activeBobber.pos.z, false);
+                    if (activeBobber.pos.y <= WATER_Y) {
+                        activeBobber.pos.y = WATER_Y;
+                        activeBobber.vel.set(0, 0, 0);
+                        activeBobber.state = 'settled';
+                        playWaterSplashSound(activeBobber.pos);
+                    } else if (activeBobber.pos.y <= terrainH) {
+                        activeBobber.pos.y = terrainH;
+                        activeBobber.vel.set(0, 0, 0);
+                        activeBobber.state = 'settled';
+                    }
+                } else if (activeBobber.state === 'settled') {
+                    const terrainH = getTerrainHeight(activeBobber.pos.x, activeBobber.pos.z, false);
+                    const isWater = (terrainH <= WATER_Y);
+                    
+                    if (isWater) {
+                        activeBobber.fishTimer -= delta;
+                        if (activeBobber.fishTimer <= 0) {
+                            const fishMat = new THREE.MeshStandardMaterial({ color: 0xffaa00, roughness: 0.8 });
+                            const fishGroup = new THREE.Group();
+                            const body = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.04, 0.25), fishMat);
+                            fishGroup.add(body);
+                            const tail = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.08, 0.08), fishMat);
+                            tail.position.z = -0.15;
+                            fishGroup.add(tail);
+                            
+                            const swimStartAngle = Math.random() * Math.PI * 2;
+                            const fx = activeBobber.pos.x + Math.cos(swimStartAngle) * 2.0;
+                            const fz = activeBobber.pos.z + Math.sin(swimStartAngle) * 2.0;
+                            fishGroup.position.set(fx, WATER_Y - 0.15, fz);
+                            scene.add(fishGroup);
+                            
+                            activeBobber.fishMesh = fishGroup;
+                            activeBobber.state = 'luring';
+                            activeBobber.fishSwimRadius = 2.0;
+                            activeBobber.fishSwimAngle = swimStartAngle;
+                        }
+                    }
+                } else if (activeBobber.state === 'luring') {
+                    if (activeBobber.fishMesh) {
+                        activeBobber.fishSwimAngle += delta * 2.5;
+                        activeBobber.fishSwimRadius = Math.max(0, activeBobber.fishSwimRadius - delta * 0.6);
+                        
+                        const fx = activeBobber.pos.x + Math.cos(activeBobber.fishSwimAngle) * activeBobber.fishSwimRadius;
+                        const fz = activeBobber.pos.z + Math.sin(activeBobber.fishSwimAngle) * activeBobber.fishSwimRadius;
+                        activeBobber.fishMesh.position.set(fx, WATER_Y - 0.15, fz);
+                        
+                        activeBobber.fishMesh.lookAt(activeBobber.pos.x, WATER_Y - 0.15, activeBobber.pos.z);
+                        
+                        if (activeBobber.fishSwimRadius <= 0.1) {
+                            activeBobber.state = 'biting';
+                            activeBobber.biteTimer = 2.0;
+                            playWaterSplashSound(activeBobber.pos);
+                        }
+                    }
+                } else if (activeBobber.state === 'biting') {
+                    const time = clock.getElapsedTime();
+                    activeBobber.mesh.position.y = WATER_Y - 0.15 + Math.sin(time * 25.0) * 0.08;
+                    activeBobber.biteTimer -= delta;
+                    if (activeBobber.biteTimer <= 0) {
+                        addChatMessage("The fish swam away...", "system");
+                        if (activeBobber.fishMesh) {
+                            scene.remove(activeBobber.fishMesh);
+                            activeBobber.fishMesh = null;
+                        }
+                        activeBobber.mesh.position.y = WATER_Y;
+                        activeBobber.state = 'settled';
+                        activeBobber.fishTimer = 3.0 + Math.random() * 4.0;
+                    }
+                }
+                
+                if (activeBobber.lineMesh) {
+                    const start = camera.position.clone().add(new THREE.Vector3(0.2, -0.3, -0.5).applyQuaternion(camera.quaternion));
+                    const end = activeBobber.mesh.position.clone();
+                    activeBobber.lineMesh.geometry.setFromPoints([start, end]);
+                }
+            }
+            
+            if (flyingFish) {
+                flyingFish.progress += delta * 1.5;
+                const start = flyingFish.start;
+                const end = camera.position.clone().add(new THREE.Vector3(0, -0.4, -0.5).applyQuaternion(camera.quaternion));
+                const current = new THREE.Vector3().lerpVectors(start, end, flyingFish.progress);
+                const arcHeight = Math.sin(flyingFish.progress * Math.PI) * 2.5;
+                current.y += arcHeight;
+                
+                flyingFish.mesh.position.copy(current);
+                flyingFish.mesh.rotation.x += delta * 6.0;
+                flyingFish.mesh.rotation.y += delta * 6.0;
+                
+                if (flyingFish.progress >= 1.0) {
+                    addFoodToInventory('raw_fish');
+                    scene.remove(flyingFish.mesh);
+                    flyingFish = null;
+                    updateInventoryUI();
+                    updateHotbarUI();
+                    addChatMessage("Caught a Raw Fish!", "system");
+                }
+            }
+        }
+
         function handleKeyPressF() {
             if (!gameActive || myHealth <= 0 || mapOpen || chatOpen || inventoryOpen) return;
+
+            const currentItem = hotbarItems[selectedHotbarIndex];
+            if (currentItem === 'fishing_rod') {
+                if (activeBobber) {
+                    reelFishingLine();
+                } else {
+                    castFishingLine();
+                }
+                return;
+            }
             
             // If in a bush, exit it
             if (inBush) {
@@ -7895,6 +9723,32 @@ export function initNeonBruiser(): Cleanup {
             updateFloatingItemUI();
         }
 
+        function onArmorSlotClick(slot) {
+            if (heldItem) {
+                const isValidArmor = heldItem.type.endsWith('_' + slot);
+                const isGauntletsMatch = (slot === 'gauntlets' && (heldItem.type.endsWith('_gauntlets') || heldItem.type.endsWith('_guantlets')));
+                
+                if (isValidArmor || isGauntletsMatch) {
+                    const temp = armorItems[slot];
+                    armorItems[slot] = heldItem.type;
+                    if (temp) {
+                        heldItem = { type: temp, count: 1 };
+                    } else {
+                        heldItem = null;
+                    }
+                } else {
+                    addChatMessage(`You can only equip ${slot} in this slot!`, "system");
+                }
+            } else {
+                if (armorItems[slot]) {
+                    heldItem = { type: armorItems[slot], count: 1 };
+                    armorItems[slot] = null;
+                }
+            }
+            updateInventoryUI();
+            updateFloatingItemUI();
+        }
+
         function onInventorySlotClick(slotType, index) {
             // Weapon slots are no longer permanent since fists/kicks are keys 1/2
             
@@ -7982,6 +9836,14 @@ export function initNeonBruiser(): Cleanup {
             if (idx < 0 || idx > 8) return;
             selectedHotbarIndex = idx;
             
+            if (isEating) {
+                isEating = false;
+                if (rightHand) {
+                    rightHand.position.set(0.35, -0.3, -0.7);
+                    rightHand.rotation.set(0, 0, 0);
+                }
+            }
+            
             updateHotbarUI();
             
             const item = hotbarItems[idx];
@@ -8001,6 +9863,14 @@ export function initNeonBruiser(): Cleanup {
 
         function updateHunger(delta) {
             if (!gameActive || myHealth <= 0) return;
+            
+            if (currentGameMode === 'freedom') {
+                if (hunger !== 100) {
+                    hunger = 100;
+                    updateMinecraftStatsUI();
+                }
+                return;
+            }
             
             const now = Date.now();
             let drainRate = 1.0; 
@@ -8565,7 +10435,7 @@ export function initNeonBruiser(): Cleanup {
                 handle.rotation.x = Math.PI / 2;
                 group.add(handle);
                 
-                const head = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.03, 0.03), headMat);
+                const head = createCurvedPickaxeHeadGroup(headMat);
                 head.position.set(0, 0, -0.225);
                 group.add(head);
             }
@@ -8617,6 +10487,14 @@ export function initNeonBruiser(): Cleanup {
             const hotbarRowContainer = document.getElementById('inventory-hotbar-row');
             if (!gridContainer || !hotbarRowContainer) return;
             
+            // Auto-sync obtainedItems with current inventory/hotbar items
+            for (let i = 0; i < 27; i++) {
+                if (inventoryItems[i]) obtainedItems.add(inventoryItems[i]);
+            }
+            for (let i = 0; i < 9; i++) {
+                if (hotbarItems[i]) obtainedItems.add(hotbarItems[i]);
+            }
+            
             let gridHTML = '';
             for (let i = 0; i < 27; i++) {
                 const item = inventoryItems[i];
@@ -8648,6 +10526,41 @@ export function initNeonBruiser(): Cleanup {
                 `;
             }
             hotbarRowContainer.innerHTML = hotbarHTML;
+            
+            // Render Armor slots
+            const armorRowContainer = document.getElementById('inventory-armor-row');
+            if (armorRowContainer) {
+                const slots = ['helmet', 'chestplate', 'leggings', 'gauntlets', 'boots'];
+                const slotIcons = {
+                    helmet: '🪖',
+                    chestplate: '👕',
+                    leggings: '👖',
+                    gauntlets: '🥊',
+                    boots: '🥾'
+                };
+                const slotLabels = {
+                    helmet: 'Helmet Slot',
+                    chestplate: 'Chestplate Slot',
+                    leggings: 'Leggings Slot',
+                    gauntlets: 'Gauntlets Slot',
+                    boots: 'Boots Slot'
+                };
+                
+                let armorHTML = '';
+                slots.forEach(slot => {
+                    const item = armorItems[slot];
+                    const iconUrl = item ? getItemIconDataURL(item) : '';
+                    const name = item ? ITEM_NAMES[item] || '' : `${slotLabels[slot]} (${slotIcons[slot]})`;
+                    
+                    armorHTML += `
+                        <div class="hotbar-slot armor-slot" onclick="onArmorSlotClick('${slot}')" title="${name}" style="background: rgba(0, 0, 0, 0.45); border: 2px dashed rgba(0, 240, 255, 0.3); width: 42px; height: 42px; display: flex; align-items: center; justify-content: center; position: relative; border-radius: 6px; cursor: pointer; box-sizing: border-box;">
+                            ${iconUrl ? `<img class="slot-icon-img" src="${iconUrl}" style="width: 32px; height: 32px; object-fit: contain;" />` : `<span style="font-size: 1.1rem; opacity: 0.35;">${slotIcons[slot]}</span>`}
+                        </div>
+                    `;
+                });
+                armorRowContainer.innerHTML = armorHTML;
+            }
+            
             updateCraftingUI();
         }
 
@@ -8810,6 +10723,42 @@ export function initNeonBruiser(): Cleanup {
             return bestBench;
         }
 
+        function getStoneCutterAimTarget() {
+            const myX = camera.position.x;
+            const myY = camera.position.y;
+            const myZ = camera.position.z;
+            const lookDir = new THREE.Vector3();
+            camera.getWorldDirection(lookDir);
+            
+            let bestCutter = null;
+            let bestDist = Infinity;
+            
+            placedObjects.forEach(obj => {
+                if (obj.type !== 'stone_cutter') return;
+                
+                const ox = obj.pos.x;
+                const oy = obj.pos.y + 0.5;
+                const oz = obj.pos.z;
+                
+                const dx = ox - myX;
+                const dy = oy - myY;
+                const dz = oz - myZ;
+                const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                
+                if (dist < 6.0) {
+                    const toCutter = new THREE.Vector3(dx, dy, dz).normalize();
+                    const dot = lookDir.dot(toCutter);
+                    if (dot > 0.85) {
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            bestCutter = obj;
+                        }
+                    }
+                }
+            });
+            return bestCutter;
+        }
+
         function getPlacedObjectAimTarget() {
             const myX = camera.position.x;
             const myY = camera.position.y;
@@ -8845,11 +10794,28 @@ export function initNeonBruiser(): Cleanup {
         }
 
         function minePlacedObject(obj) {
+            if (obj.type === 'chest' && obj.chestInventoryItems) {
+                for (let i = 0; i < 27; i++) {
+                    const itemType = obj.chestInventoryItems[i];
+                    const itemCount = obj.chestInventoryCounts[i];
+                    if (itemType && itemCount > 0) {
+                        for (let count = 0; count < itemCount; count++) {
+                            spawnDroppedFood(itemType, obj.pos.clone().add(new THREE.Vector3(
+                                (Math.random() - 0.5) * 0.4,
+                                0.3 + Math.random() * 0.2,
+                                (Math.random() - 0.5) * 0.4
+                            )));
+                        }
+                    }
+                }
+            }
             scene.remove(obj.mesh);
             const index = placedObjects.indexOf(obj);
             if (index !== -1) {
                 placedObjects.splice(index, 1);
             }
+            spawnDebrisParticles(obj.pos, obj.type, 15);
+            checkStructuralPhysics();
             spawnDroppedFood(obj.type, obj.pos.clone().add(new THREE.Vector3(0, 0.3, 0)));
             if (isConnected) {
                 sendNetworkMessage({
@@ -8872,6 +10838,8 @@ export function initNeonBruiser(): Cleanup {
                 const obj = placedObjects[index];
                 scene.remove(obj.mesh);
                 placedObjects.splice(index, 1);
+                spawnDebrisParticles(obj.pos, obj.type, 15);
+                checkStructuralPhysics();
             }
         }
 
@@ -9044,25 +11012,153 @@ export function initNeonBruiser(): Cleanup {
             const lookDir = new THREE.Vector3();
             camera.getWorldDirection(lookDir);
             
-            if (lookDir.y > 0.6) return null;
+            if (lookDir.y > 0.8) return null; // Prevent placing in empty sky
             
-            const steps = 30;
+            const item = hotbarItems[selectedHotbarIndex];
+            if (!item) return null;
+            
+            const widthX = (item === 'crafting_bench') ? 1.6 : 0.9;
+            const widthZ = (item === 'crafting_bench') ? 0.7 : 0.9;
+            const height = (item === 'crafting_bench') ? 1.0 : (item === 'door' ? 1.8 : (item === 'stone_slab' ? 0.45 : 0.9));
+            
+            const steps = 120;
             const stepSize = maxDist / steps;
-            const currentPos = camera.position.clone();
+            const origin = camera.position.clone();
             
-            for (let i = 0; i < steps; i++) {
-                currentPos.addScaledVector(lookDir, stepSize);
-                const terrY = getTerrainHeight(currentPos.x, currentPos.z, playerInCave);
-                if (currentPos.y <= terrY) {
-                    return new THREE.Vector3(currentPos.x, terrY, currentPos.z);
+            for (let j = 0; j < steps; j++) {
+                const pt = origin.clone().addScaledVector(lookDir, j * stepSize);
+                
+                // 1. Check intersection with placed blocks
+                for (let i = 0; i < placedObjects.length; i++) {
+                    const obj = placedObjects[i];
+                    const objWidthX = (obj.type === 'crafting_bench') ? 1.6 : 0.9;
+                    const objWidthZ = (obj.type === 'crafting_bench') ? 0.7 : 0.9;
+                    const objHeight = (obj.type === 'crafting_bench') ? 1.0 : (obj.type === 'door' ? 1.8 : (obj.type === 'stone_slab' ? 0.45 : 0.9));
+                    
+                    const minX = obj.pos.x - objWidthX / 2;
+                    const maxX = obj.pos.x + objWidthX / 2;
+                    const minZ = obj.pos.z - objWidthZ / 2;
+                    const maxZ = obj.pos.z + objWidthZ / 2;
+                    const minY = obj.pos.y;
+                    const maxY = obj.pos.y + objHeight;
+                    
+                    if (pt.x >= minX && pt.x <= maxX && pt.z >= minZ && pt.z <= maxZ && pt.y >= minY && pt.y <= maxY) {
+                        // Intersection detected! Find which face was hit by checking the previous step
+                        const ptPrev = origin.clone().addScaledVector(lookDir, Math.max(0, j - 1) * stepSize);
+                        let normal = new THREE.Vector3(0, 1, 0); // default to top face
+                        
+                        if (ptPrev.y >= maxY) {
+                            normal.set(0, 1, 0);
+                        } else if (ptPrev.y <= minY) {
+                            normal.set(0, -1, 0);
+                        } else if (ptPrev.x >= maxX) {
+                            normal.set(1, 0, 0);
+                        } else if (ptPrev.x <= minX) {
+                            normal.set(-1, 0, 0);
+                        } else if (ptPrev.z >= maxZ) {
+                            normal.set(0, 0, 1);
+                        } else if (ptPrev.z <= minZ) {
+                            normal.set(0, 0, -1);
+                        }
+                        
+                        const placePos = new THREE.Vector3();
+                        if (normal.y === 1) {
+                            placePos.set(obj.pos.x, obj.pos.y + objHeight, obj.pos.z);
+                        } else if (normal.y === -1) {
+                            placePos.set(obj.pos.x, obj.pos.y - height, obj.pos.z);
+                        } else if (normal.x === 1) {
+                            placePos.set(obj.pos.x + objWidthX / 2 + widthX / 2, obj.pos.y, obj.pos.z);
+                        } else if (normal.x === -1) {
+                            placePos.set(obj.pos.x - objWidthX / 2 - widthX / 2, obj.pos.y, obj.pos.z);
+                        } else if (normal.z === 1) {
+                            placePos.set(obj.pos.x, obj.pos.y, obj.pos.z + objWidthZ / 2 + widthZ / 2);
+                        } else if (normal.z === -1) {
+                            placePos.set(obj.pos.x, obj.pos.y, obj.pos.z - objWidthZ / 2 - widthZ / 2);
+                        }
+                        return placePos;
+                    }
+                }
+                
+                // 2. Check intersection with terrain height
+                const terrY = getTerrainHeight(pt.x, pt.z, playerInCave);
+                if (pt.y <= terrY) {
+                    return new THREE.Vector3(pt.x, terrY, pt.z);
                 }
             }
             return null;
         }
 
+        function createPlacedWoolMesh() {
+            const group = new THREE.Group();
+            const woolMat = new THREE.MeshStandardMaterial({ color: 0xf5f5f5, roughness: 0.95 });
+            
+            // Central block
+            const center = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.85, 0.85), woolMat);
+            center.position.y = 0.425;
+            group.add(center);
+            
+            // Add a few small offset boxes for fluffy wool texture
+            const fluffGeo = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+            const offsets = [
+                [0.4, 0.5, 0.2], [-0.4, 0.3, -0.3], [0.2, 0.8, -0.2], [-0.2, 0.8, 0.3],
+                [0.3, 0.2, -0.4], [-0.3, 0.5, 0.4], [0.1, 0.3, 0.45], [-0.1, 0.2, -0.45]
+            ];
+            offsets.forEach(([ox, oy, oz]) => {
+                const fluff = new THREE.Mesh(fluffGeo, woolMat);
+                fluff.position.set(ox, oy, oz);
+                group.add(fluff);
+            });
+            
+            return group;
+        }
+
+        function createPlacedBedMesh() {
+            const group = new THREE.Group();
+            
+            const woodMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
+            const whiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
+            const blanketMat = new THREE.MeshStandardMaterial({ color: 0xff007f, roughness: 0.7 }); // Cozy magenta blanket
+            
+            // Bed frame: width 0.9, height 0.2, length 1.6
+            const frame = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.2, 1.6), woodMat);
+            frame.position.set(0, 0.1, 0);
+            group.add(frame);
+            
+            // Four bed legs
+            const legGeo = new THREE.BoxGeometry(0.08, 0.35, 0.08);
+            const leg1 = new THREE.Mesh(legGeo, woodMat); leg1.position.set(-0.41, 0.075, -0.76); group.add(leg1);
+            const leg2 = new THREE.Mesh(legGeo, woodMat); leg2.position.set(0.41, 0.075, -0.76); group.add(leg2);
+            const leg3 = new THREE.Mesh(legGeo, woodMat); leg3.position.set(-0.41, 0.075, 0.76); group.add(leg3);
+            const leg4 = new THREE.Mesh(legGeo, woodMat); leg4.position.set(0.41, 0.075, 0.76); group.add(leg4);
+            
+            // Headboard back
+            const headboard = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.45, 0.08), woodMat);
+            headboard.position.set(0, 0.35, -0.76);
+            group.add(headboard);
+            
+            // Pillow: width 0.76, height 0.12, length 0.35
+            const pillow = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.12, 0.35), whiteMat);
+            pillow.position.set(0, 0.26, -0.55);
+            group.add(pillow);
+            
+            // Blanket: width 0.82, height 0.14, length 1.15
+            const blanket = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.14, 1.15), blanketMat);
+            blanket.position.set(0, 0.24, 0.18);
+            group.add(blanket);
+            
+            return group;
+        }
+
         function spawnPlacedObject(type, pos, sendNetwork = false) {
             let mesh;
-            if (type === 'log') {
+            if (type === 'wool') {
+                mesh = createPlacedWoolMesh();
+                mesh.position.copy(pos);
+            } else if (type === 'bed') {
+                mesh = createPlacedBedMesh();
+                mesh.rotation.y = Math.round(camera.rotation.y / (Math.PI / 2)) * (Math.PI / 2);
+                mesh.position.copy(pos);
+            } else if (type === 'log') {
                 const barkMat = new THREE.MeshStandardMaterial({ color: 0x5c4033, roughness: 0.9 });
                 const capMat = new THREE.MeshStandardMaterial({ color: 0xd2b48c, roughness: 0.9 });
                 const mats = [barkMat, capMat, capMat];
@@ -9133,6 +11229,14 @@ export function initNeonBruiser(): Cleanup {
                 scene.remove(obj.mesh);
             });
             placedObjects.length = 0;
+            fallingBlocks.forEach(fb => {
+                scene.remove(fb.mesh);
+            });
+            fallingBlocks.length = 0;
+            debrisParticles.forEach(dp => {
+                scene.remove(dp.mesh);
+            });
+            debrisParticles.length = 0;
             obtainedItems.clear();
             obtainedItems.add('wooden_axe');
             obtainedItems.add('crafting_bench');
@@ -10491,6 +12595,17 @@ export function initNeonBruiser(): Cleanup {
             }, 250);
         }
 
+        function handleAnimalDeathDrops(animal) {
+            spawnDroppedFood(getFoodTypeForAnimal(animal.type), animal.mesh.position);
+            if (animal.type === 'sheep') {
+                spawnDroppedFood('wool', animal.mesh.position.clone().add(new THREE.Vector3(0.2, 0.2, 0.2)));
+            } else if (animal.type === 'turtle') {
+                spawnDroppedFood('turtle_shell', animal.mesh.position.clone().add(new THREE.Vector3(0.2, 0.2, 0.2)));
+            } else if (animal.type === 'cow') {
+                spawnDroppedFood('leather', animal.mesh.position.clone().add(new THREE.Vector3(0.2, 0.2, 0.2)));
+            }
+        }
+
         function getFoodTypeForAnimal(type) {
             if (type === 'pig') return 'porkchop';
             if (type === 'cow') return 'beef';
@@ -10499,8 +12614,11 @@ export function initNeonBruiser(): Cleanup {
             return 'porkchop';
         }
 
-        function spawnDroppedFood(type, pos) {
+        function spawnDroppedFood(type, pos, scale = 1.0) {
             const foodMesh = createDroppedFoodMesh(type);
+            if (scale !== 1.0) {
+                foodMesh.scale.multiplyScalar(scale);
+            }
             foodMesh.position.copy(pos);
             foodMesh.position.y += 0.3;
             scene.add(foodMesh);
@@ -10646,14 +12764,21 @@ export function initNeonBruiser(): Cleanup {
                 }
             }
             
-            bees.forEach(b => {
+            for (let i = bees.length - 1; i >= 0; i--) {
+                const b = bees[i];
                 b.mesh.visible = !playerInCave;
                 if (b.hp <= 0) {
+                    if (b.deathTime === undefined) b.deathTime = 0;
+                    b.deathTime += delta;
                     if (b.mesh.position.y > getTerrainHeight(b.mesh.position.x, b.mesh.position.z)) {
                         b.mesh.position.y -= 5 * delta;
                         b.mesh.rotation.x = Math.PI; // Upside down
                     }
-                    return;
+                    if (b.deathTime >= 1.5) {
+                        scene.remove(b.mesh);
+                        bees.splice(i, 1);
+                    }
+                    continue;
                 }
                 
                 // Wing flapping
@@ -10677,12 +12802,14 @@ export function initNeonBruiser(): Cleanup {
                         tz = opponentGroup.position.z;
                     } else {
                         beesAngryAt = null;
-                        return;
+                        continue;
                     }
                     targetPos.set(tx, ty, tz);
                     speed = 6.0;
                     
-                    b.mesh.lookAt(targetPos);
+                    if (b.pos.distanceTo(targetPos) > 0.01) {
+                        b.mesh.lookAt(targetPos);
+                    }
                     const dir = new THREE.Vector3().subVectors(targetPos, b.pos).normalize();
                     b.pos.addScaledVector(dir, speed * delta);
                     b.mesh.position.copy(b.pos);
@@ -10717,7 +12844,9 @@ export function initNeonBruiser(): Cleanup {
                             }
                             targetPos.copy(b.wanderTarget);
                             
-                            b.mesh.lookAt(targetPos);
+                            if (b.pos.distanceTo(targetPos) > 0.01) {
+                                b.mesh.lookAt(targetPos);
+                            }
                             const dir = new THREE.Vector3().subVectors(targetPos, b.pos).normalize();
                             b.pos.addScaledVector(dir, 2.5 * delta);
                             b.mesh.position.copy(b.pos);
@@ -10727,7 +12856,9 @@ export function initNeonBruiser(): Cleanup {
                             b.state = 'wander';
                         } else {
                             targetPos.copy(b.targetFlower);
-                            b.mesh.lookAt(targetPos);
+                            if (b.pos.distanceTo(targetPos) > 0.01) {
+                                b.mesh.lookAt(targetPos);
+                            }
                             
                             const dist = b.pos.distanceTo(targetPos);
                             if (dist < 0.5) {
@@ -10748,7 +12879,9 @@ export function initNeonBruiser(): Cleanup {
                         }
                     } else if (b.state === 'return') {
                         targetPos.copy(b.home);
-                        b.mesh.lookAt(targetPos);
+                        if (b.pos.distanceTo(targetPos) > 0.01) {
+                            b.mesh.lookAt(targetPos);
+                        }
                         
                         const dist = b.pos.distanceTo(targetPos);
                         if (dist < 0.5) {
@@ -10760,6 +12893,21 @@ export function initNeonBruiser(): Cleanup {
                             b.mesh.position.copy(b.pos);
                         }
                     }
+                }
+            }
+            
+            // Handle beehive respawns
+            beehives.forEach(h => {
+                const count = bees.filter(b => b.hp > 0 && b.home.distanceTo(new THREE.Vector3(h.x, h.y, h.z)) < 0.1).length;
+                if (count < 5) {
+                    if (h.respawnTimer === undefined) h.respawnTimer = 0;
+                    h.respawnTimer += delta;
+                    if (h.respawnTimer >= 20.0) {
+                        spawnSingleBeeForHive(h.x, h.y, h.z);
+                        h.respawnTimer = 0;
+                    }
+                } else {
+                    h.respawnTimer = 0;
                 }
             });
             
@@ -10776,7 +12924,6 @@ export function initNeonBruiser(): Cleanup {
                     type: 'bees-sync',
                     bees: syncData
                 });
-                lastBeeSyncTime = now;
             }
         }
 
@@ -11132,6 +13279,68 @@ export function initNeonBruiser(): Cleanup {
             }
         }
 
+        function spawnEatingParticles(foodType) {
+            const dir = new THREE.Vector3();
+            camera.getWorldDirection(dir);
+            
+            const mouthPos = new THREE.Vector3();
+            mouthPos.copy(camera.position);
+            mouthPos.addScaledVector(dir, 0.4);
+            mouthPos.y -= 0.15;
+            
+            let color = 0xff9ebb;
+            if (foodType === 'porkchop') color = 0xff9ebb;
+            else if (foodType === 'beef') color = 0x8b2500;
+            else if (foodType === 'mutton') color = 0xff6a6a;
+            else if (foodType === 'chicken') color = 0xcd853f;
+            else if (foodType === 'raw_fish') color = 0x4682b4;
+            
+            const count = 5 + Math.floor(Math.random() * 4);
+            for (let i = 0; i < count; i++) {
+                const size = 0.015 + Math.random() * 0.02;
+                const geo = new THREE.BoxGeometry(size, size, size);
+                const mat = new THREE.MeshBasicMaterial({
+                    color: color,
+                    transparent: true,
+                    opacity: 0.95
+                });
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.position.copy(mouthPos);
+                mesh.position.x += (Math.random() - 0.5) * 0.1;
+                mesh.position.y += (Math.random() - 0.5) * 0.1;
+                mesh.position.z += (Math.random() - 0.5) * 0.1;
+                
+                scene.add(mesh);
+                
+                const scatter = 0.25;
+                eatingParticles.push({
+                    mesh: mesh,
+                    mat: mat,
+                    velX: dir.x * 0.2 + (Math.random() - 0.5) * scatter,
+                    velY: dir.y * 0.2 + (Math.random() - 0.5) * scatter - 0.1,
+                    velZ: dir.z * 0.2 + (Math.random() - 0.5) * scatter,
+                    life: 0.4 + Math.random() * 0.3
+                });
+            }
+        }
+
+        function updateEatingParticles(delta) {
+            for (let i = eatingParticles.length - 1; i >= 0; i--) {
+                const p = eatingParticles[i];
+                p.life -= delta;
+                if (p.life <= 0) {
+                    scene.remove(p.mesh);
+                    eatingParticles.splice(i, 1);
+                } else {
+                    p.velY -= 3.0 * delta;
+                    p.mesh.position.x += p.velX * delta;
+                    p.mesh.position.y += p.velY * delta;
+                    p.mesh.position.z += p.velZ * delta;
+                    p.mat.opacity = Math.max(0, p.life / 0.7);
+                }
+            }
+        }
+
         let localPlayerWasBurning = false;
         let lastHealthSyncTime = 0;
         function updatePlayerBurning(delta) {
@@ -11273,19 +13482,1077 @@ export function initNeonBruiser(): Cleanup {
             noise.stop(now + 2.0);
         };
 
+        function createChestMesh() {
+            const group = new THREE.Group();
+            
+            const woodMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
+            const borderMat = new THREE.MeshStandardMaterial({ color: 0x5c4033, roughness: 0.9 });
+            const latchMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.8, roughness: 0.2 });
+            
+            // Chest body (BoxGeometry: width, height, depth)
+            const base = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.5, 0.8), woodMat);
+            base.position.y = 0.25;
+            group.add(base);
+            
+            // Chest lid: 0.8 width, 0.2 height, 0.8 depth.
+            const lid = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.2, 0.8), woodMat);
+            lid.position.y = 0.6;
+            lid.name = "lid";
+            group.add(lid);
+            
+            // Corner details (borders) to make it look rustic/minecrafty
+            const borderTop = new THREE.Mesh(new THREE.BoxGeometry(0.84, 0.05, 0.84), borderMat);
+            borderTop.position.y = 0.5;
+            group.add(borderTop);
+            
+            // Front Latch
+            const latch = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.15, 0.08), latchMat);
+            latch.position.set(0, 0.5, 0.41);
+            latch.name = "latch";
+            group.add(latch);
+            
+            return group;
+        }
+
+        function getChestAimTarget() {
+            const myX = camera.position.x;
+            const myY = camera.position.y;
+            const myZ = camera.position.z;
+            const lookDir = new THREE.Vector3();
+            camera.getWorldDirection(lookDir);
+            
+            let bestChest = null;
+            let bestDist = Infinity;
+            
+            placedObjects.forEach(obj => {
+                if (obj.type !== 'chest') return;
+                
+                const dx = obj.pos.x - myX;
+                const dy = (obj.pos.y + 0.45) - myY;
+                const dz = obj.pos.z - myZ;
+                const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                
+                if (dist < 4.0) {
+                    const toObj = new THREE.Vector3(dx, dy, dz).normalize();
+                    const dot = lookDir.dot(toObj);
+                    if (dot > 0.85) {
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            bestChest = obj;
+                        }
+                    }
+                }
+            });
+            return bestChest;
+        }
+
+        function getBedAimTarget() {
+            const myX = camera.position.x;
+            const myY = camera.position.y;
+            const myZ = camera.position.z;
+            const lookDir = new THREE.Vector3();
+            camera.getWorldDirection(lookDir);
+            
+            let bestBed = null;
+            let bestDist = Infinity;
+            
+            placedObjects.forEach(obj => {
+                if (obj.type !== 'bed') return;
+                
+                const dx = obj.pos.x - myX;
+                const dy = (obj.pos.y + 0.225) - myY;
+                const dz = obj.pos.z - myZ;
+                const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                
+                if (dist < 4.0) {
+                    const toObj = new THREE.Vector3(dx, dy, dz).normalize();
+                    const dot = lookDir.dot(toObj);
+                    if (dot > 0.85) {
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            bestBed = obj;
+                        }
+                    }
+                }
+            });
+            return bestBed;
+        }
+
+        function trySleepInBed() {
+            const totalCycleMs = CYCLE_DURATION * 1000;
+            const cycleTime = ((Date.now() + timeOffset) % totalCycleMs) / 1000;
+            
+            const isNight = (cycleTime >= 540 || cycleTime < 30);
+            
+            if (!isNight) {
+                addChatMessage("You can only sleep at night!", "system");
+                return;
+            }
+            
+            const fadeDiv = document.createElement('div');
+            fadeDiv.style.position = 'fixed';
+            fadeDiv.style.left = '0';
+            fadeDiv.style.top = '0';
+            fadeDiv.style.width = '100%';
+            fadeDiv.style.height = '100%';
+            fadeDiv.style.background = 'black';
+            fadeDiv.style.opacity = '0';
+            fadeDiv.style.transition = 'opacity 1s ease-in-out';
+            fadeDiv.style.zIndex = '9999';
+            fadeDiv.style.pointerEvents = 'none';
+            document.body.appendChild(fadeDiv);
+            
+            setTimeout(() => {
+                fadeDiv.style.opacity = '1';
+            }, 50);
+            
+            setTimeout(() => {
+                timeOffset = (30000 - (Date.now() % totalCycleMs) + totalCycleMs) % totalCycleMs;
+                addChatMessage("You fell asleep...", "system");
+                
+                myHealth = Math.min(100, myHealth + 25);
+                updateHud();
+            }, 1050);
+            
+            setTimeout(() => {
+                fadeDiv.style.opacity = '0';
+            }, 2050);
+            
+            setTimeout(() => {
+                if (document.body.contains(fadeDiv)) {
+                    document.body.removeChild(fadeDiv);
+                }
+                addChatMessage("Good morning!", "system");
+            }, 3100);
+        }
+
+        function createFurnaceMesh() {
+            const group = new THREE.Group();
+            const bodyMat = new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.9 });
+            
+            const base = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.9), bodyMat);
+            base.position.y = 0.45;
+            group.add(base);
+
+            // Cobblestone 3D tiles details on top, left, right, back
+            const tileMatLight = new THREE.MeshStandardMaterial({ color: 0x777777, roughness: 0.9 });
+            const tileMatDark = new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.9 });
+
+            const tileDetails = [
+                // Top face (y = 0.9)
+                { geom: [0.3, 0.01, 0.2], pos: [0.15, 0.905, 0.15], mat: tileMatLight },
+                { geom: [0.2, 0.01, 0.3], pos: [-0.2, 0.905, -0.15], mat: tileMatDark },
+                { geom: [0.25, 0.01, 0.25], pos: [0.2, 0.905, -0.2], mat: tileMatLight },
+                { geom: [0.15, 0.01, 0.15], pos: [-0.25, 0.905, 0.2], mat: tileMatDark },
+                
+                // Left face (x = -0.45)
+                { geom: [0.01, 0.2, 0.3], pos: [-0.455, 0.6, 0.1], mat: tileMatLight },
+                { geom: [0.01, 0.3, 0.2], pos: [-0.455, 0.25, -0.2], mat: tileMatDark },
+                { geom: [0.01, 0.25, 0.25], pos: [-0.455, 0.7, -0.15], mat: tileMatLight },
+                { geom: [0.01, 0.15, 0.15], pos: [-0.455, 0.3, 0.25], mat: tileMatDark },
+
+                // Right face (x = 0.45)
+                { geom: [0.01, 0.2, 0.3], pos: [0.455, 0.6, -0.1], mat: tileMatLight },
+                { geom: [0.01, 0.3, 0.2], pos: [0.455, 0.25, 0.2], mat: tileMatDark },
+                { geom: [0.01, 0.25, 0.25], pos: [0.455, 0.7, 0.15], mat: tileMatLight },
+                { geom: [0.01, 0.15, 0.15], pos: [0.455, 0.3, -0.25], mat: tileMatDark },
+
+                // Back face (z = -0.45)
+                { geom: [0.3, 0.2, 0.01], pos: [0.1, 0.6, -0.455], mat: tileMatLight },
+                { geom: [0.2, 0.3, 0.01], pos: [-0.2, 0.25, -0.455], mat: tileMatDark },
+                { geom: [0.25, 0.25, 0.01], pos: [0.15, 0.25, -0.455], mat: tileMatLight },
+                { geom: [0.15, 0.15, 0.01], pos: [-0.25, 0.7, -0.455], mat: tileMatDark }
+            ];
+
+            tileDetails.forEach(tile => {
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(...tile.geom), tile.mat);
+                mesh.position.set(...tile.pos);
+                group.add(mesh);
+            });
+
+            // Front plate (z = 0.45)
+            const frontPlate = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.03), bodyMat);
+            frontPlate.position.set(0, 0.45, 0.455);
+            group.add(frontPlate);
+
+            // Front details (cobblestone border elements on front plate)
+            const frontDetails = [
+                { geom: [0.2, 0.1, 0.01], pos: [-0.3, 0.8, 0.47], mat: tileMatLight },
+                { geom: [0.2, 0.1, 0.01], pos: [0.3, 0.8, 0.47], mat: tileMatDark },
+                { geom: [0.1, 0.3, 0.01], pos: [-0.4, 0.45, 0.47], mat: tileMatDark },
+                { geom: [0.1, 0.3, 0.01], pos: [0.4, 0.45, 0.47], mat: tileMatLight },
+                { geom: [0.2, 0.1, 0.01], pos: [-0.3, 0.1, 0.47], mat: tileMatLight },
+                { geom: [0.2, 0.1, 0.01], pos: [0.3, 0.1, 0.47], mat: tileMatDark }
+            ];
+
+            frontDetails.forEach(tile => {
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(...tile.geom), tile.mat);
+                mesh.position.set(...tile.pos);
+                group.add(mesh);
+            });
+
+            // Top mouth slot (dark unlit arch opening)
+            const mouthMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 1.0 });
+            const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.16, 0.02), mouthMat);
+            mouth.position.set(0, 0.62, 0.47);
+            group.add(mouth);
+
+            // Bottom burner slot recess (dark backdrop)
+            const burnerBack = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.26, 0.02), mouthMat);
+            burnerBack.position.set(0, 0.26, 0.47);
+            group.add(burnerBack);
+
+            // Fire indicator (burningIndicator)
+            const fireIndicatorMat = new THREE.MeshStandardMaterial({ color: 0x111111, emissive: 0x000000, roughness: 0.5 });
+            const indicator = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.22, 0.015), fireIndicatorMat);
+            indicator.position.set(0, 0.26, 0.475);
+            indicator.name = 'burningIndicator';
+
+            // Orange flame layer (hidden initially)
+            const orangeMat = new THREE.MeshStandardMaterial({ color: 0xffaa00, emissive: 0xffaa00, roughness: 0.5 });
+            const orangeFlame = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.14, 0.005), orangeMat);
+            orangeFlame.position.set(0, -0.01, 0.005);
+            orangeFlame.visible = false;
+            indicator.add(orangeFlame);
+
+            // Yellow flame layer (hidden initially)
+            const yellowMat = new THREE.MeshStandardMaterial({ color: 0xffff00, emissive: 0xffff00, roughness: 0.5 });
+            const yellowFlame = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.08, 0.005), yellowMat);
+            yellowFlame.position.set(0, -0.03, 0.01);
+            yellowFlame.visible = false;
+            indicator.add(yellowFlame);
+
+            group.add(indicator);
+            
+            return group;
+        }
+
+        function getFurnaceAimTarget() {
+            const myX = camera.position.x;
+            const myY = camera.position.y;
+            const myZ = camera.position.z;
+            const lookDir = new THREE.Vector3();
+            camera.getWorldDirection(lookDir);
+            
+            let bestFurnace = null;
+            let bestDist = Infinity;
+            
+            placedObjects.forEach(obj => {
+                if (obj.type !== 'furnace') return;
+                
+                const ox = obj.pos.x;
+                const oy = obj.pos.y + 0.45;
+                const oz = obj.pos.z;
+                
+                const dx = ox - myX;
+                const dy = oy - myY;
+                const dz = oz - myZ;
+                const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                
+                if (dist < 6.0) {
+                    const toFurnace = new THREE.Vector3(dx, dy, dz).normalize();
+                    const dot = lookDir.dot(toFurnace);
+                    if (dot > 0.85) {
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            bestFurnace = obj;
+                        }
+                    }
+                }
+            });
+            return bestFurnace;
+        }
+
+        function isFuel(type) {
+            return ['coal', 'log', 'planks', 'sticks', 'door', 'ladder', 'wooden_stairs', 'wooden_pickaxe', 'wooden_axe', 'wooden_sword'].includes(type);
+        }
+
+        function getFuelBurnTime(type) {
+            if (type === 'coal') return 40;
+            if (type === 'log') return 10;
+            if (type === 'planks') return 8;
+            if (type === 'sticks') return 3;
+            if (['door', 'ladder', 'wooden_stairs', 'wooden_pickaxe', 'wooden_axe', 'wooden_sword'].includes(type)) return 6;
+            return 0;
+        }
+
+        function isSmeltable(type) {
+            return ['raw_iron', 'porkchop', 'beef', 'mutton', 'chicken', 'raw_fish'].includes(type);
+        }
+
+        function getSmeltTime(type) {
+            if (type === 'raw_iron') return 8;
+            return 5;
+        }
+
+        function getSmeltOutput(type) {
+            if (type === 'raw_iron') return 'iron_ingot';
+            if (type === 'porkchop') return 'cooked_porkchop';
+            if (type === 'beef') return 'cooked_beef';
+            if (type === 'mutton') return 'cooked_mutton';
+            if (type === 'chicken') return 'cooked_chicken';
+            if (type === 'raw_fish') return 'cooked_fish';
+            return null;
+        }
+
+        function updateFurnaces(delta) {
+            placedObjects.forEach(obj => {
+                if (obj.type !== 'furnace') return;
+                
+                if (!obj.furnaceState) {
+                    obj.furnaceState = {
+                        inputItem: null,
+                        fuelItem: null,
+                        outputItem: null,
+                        fuelBurnTimeLeft: 0,
+                        fuelMaxBurnTime: 0,
+                        smeltProgress: 0
+                    };
+                }
+                
+                const state = obj.furnaceState;
+                
+                if (state.fuelBurnTimeLeft > 0) {
+                    state.fuelBurnTimeLeft -= delta;
+                    if (state.fuelBurnTimeLeft < 0) state.fuelBurnTimeLeft = 0;
+                }
+                
+                const canSmelt = state.inputItem && state.inputItem.count > 0 && isSmeltable(state.inputItem.type);
+                let outputCompatible = true;
+                if (canSmelt && state.outputItem) {
+                    const expectedOutput = getSmeltOutput(state.inputItem.type);
+                    if (state.outputItem.type !== expectedOutput || state.outputItem.count >= 64) {
+                        outputCompatible = false;
+                    }
+                }
+                
+                if (state.fuelBurnTimeLeft <= 0 && canSmelt && outputCompatible && state.fuelItem && state.fuelItem.count > 0) {
+                    const burnTime = getFuelBurnTime(state.fuelItem.type);
+                    if (burnTime > 0) {
+                        state.fuelBurnTimeLeft = burnTime;
+                        state.fuelMaxBurnTime = burnTime;
+                        state.fuelItem.count--;
+                        if (state.fuelItem.count <= 0) {
+                            state.fuelItem = null;
+                        }
+                    }
+                }
+                
+                if (state.fuelBurnTimeLeft > 0 && canSmelt && outputCompatible) {
+                    const smeltTime = getSmeltTime(state.inputItem.type);
+                    state.smeltProgress += delta / smeltTime;
+                    
+                    if (state.smeltProgress >= 1.0) {
+                        state.smeltProgress = 0;
+                        const inputType = state.inputItem.type;
+                        const outputType = getSmeltOutput(inputType);
+                        
+                        state.inputItem.count--;
+                        if (state.inputItem.count <= 0) {
+                            state.inputItem = null;
+                        }
+                        
+                        if (!state.outputItem) {
+                            state.outputItem = { type: outputType, count: 1 };
+                        } else {
+                            state.outputItem.count++;
+                        }
+                        AudioSynth.playHit(obj.pos);
+                    }
+                } else {
+                    if (state.smeltProgress > 0) {
+                        state.smeltProgress = Math.max(0, state.smeltProgress - delta * 0.2);
+                    }
+                }
+                
+                const indicator = obj.mesh.getObjectByName('burningIndicator');
+                if (indicator) {
+                    if (state.fuelBurnTimeLeft > 0) {
+                        indicator.material.color.setHex(0xff3300); // base red-orange
+                        indicator.material.emissive.setHex(0xff3300);
+                        indicator.children.forEach(c => { c.visible = true; });
+                    } else {
+                        indicator.material.color.setHex(0x111111);
+                        indicator.material.emissive.setHex(0x000000);
+                        indicator.children.forEach(c => { c.visible = false; });
+                    }
+                }
+            });
+            
+            if (furnaceUIOpen && activeFurnace) {
+                updateFurnaceUI();
+            }
+        }
+
+        function updateBlockCracksDecay(delta) {
+            const now = Date.now();
+            
+            placedObjects.forEach(obj => {
+                if (obj.hits > 0 && obj.lastHitTime && now - obj.lastHitTime > 5000) {
+                    obj.hits = 0;
+                    updatePlacedObjectCracks(obj);
+                }
+            });
+            
+            worldStones.forEach(stone => {
+                if (stone.hits > 0 && stone.lastHitTime && now - stone.lastHitTime > 5000) {
+                    stone.hits = 0;
+                }
+            });
+            
+            if (groundHits > 0 && lastGroundHitTime && now - lastGroundHitTime > 5000) {
+                groundHits = 0;
+            }
+            
+            worldTrees.forEach(tree => {
+                if (tree.chopClicks > 0 && tree.lastHitTime && now - tree.lastHitTime > 5000) {
+                    tree.chopClicks = 0;
+                }
+            });
+        }
+
+        function updateContinuousMining(delta) {
+            if (!isMouseDown) return;
+            if (!isLocked || mapOpen || chatOpen || inventoryOpen || furnaceUIOpen || chestUIOpen) return;
+            
+            const item = hotbarItems[selectedHotbarIndex];
+            const now = Date.now();
+            
+            if (now - lastWeaponSwingTime >= 400 && now - mouseDownStartTime > 200) {
+                const aimedObj = getPlacedObjectAimTarget();
+                const aimedStone = getStoneAimTarget();
+                const aimedTree = getTreeAimTarget();
+                const aimedCoral = getCoralAimTarget();
+                
+                let didAction = false;
+                
+                if (aimedObj) {
+                    aimedObj.hits = (aimedObj.hits || 0) + 1;
+                    aimedObj.lastHitTime = now;
+                    AudioSynth.playHit(aimedObj.pos);
+                    updatePlacedObjectCracks(aimedObj);
+                    if (aimedObj.hits >= 3) {
+                        minePlacedObject(aimedObj);
+                    }
+                    didAction = true;
+                } else if (aimedCoral) {
+                    aimedCoral.hits = (aimedCoral.hits || 0) + 1;
+                    aimedCoral.lastHitTime = now;
+                    AudioSynth.playHit(aimedCoral.mesh.position);
+                    if (aimedCoral.hits >= 4) {
+                        mineNaturalCoral(aimedCoral);
+                    }
+                    didAction = true;
+                } else if (aimedStone) {
+                    if (item === 'wooden_pickaxe' || item === 'stone_pickaxe' || item === 'iron_pickaxe') {
+                        if ((aimedStone.type === 'iron_ore' || aimedStone.type === 'coal_ore') && item === 'wooden_pickaxe') {
+                            const nowMsg = Date.now();
+                            if (!aimedStone.lastWarningTime || nowMsg - aimedStone.lastWarningTime > 2000) {
+                                addChatMessage("This ore requires a Stone Pickaxe or better!", "system");
+                                aimedStone.lastWarningTime = nowMsg;
+                            }
+                            AudioSynth.playHit(aimedStone.group.position);
+                        } else {
+                            aimedStone.hits = (aimedStone.hits || 0) + 1;
+                            aimedStone.lastHitTime = now;
+                            AudioSynth.playHit(aimedStone.group.position);
+                            if (aimedStone.hits >= 10) {
+                                mineNaturalStone(aimedStone);
+                            }
+                        }
+                        didAction = true;
+                    }
+                } else if (aimedTree) {
+                    if (item === 'wooden_axe' || item === 'stone_axe' || item === 'iron_axe') {
+                        if (aimedTree.isChopped) {
+                            harvestLog(aimedTree);
+                        } else {
+                            aimedTree.chopClicks = (aimedTree.chopClicks || 0) + 1;
+                            aimedTree.lastHitTime = now;
+                            AudioSynth.playHit(aimedTree.group.position);
+                            if (aimedTree.chopClicks >= 3) {
+                                chopTreeDown(aimedTree);
+                            }
+                        }
+                        didAction = true;
+                    }
+                } else {
+                    const distToRocky = Math.sqrt(Math.pow(camera.position.x - 420, 2) + Math.pow(camera.position.z - 50, 2));
+                    const lookDir = new THREE.Vector3();
+                    camera.getWorldDirection(lookDir);
+                    
+                    if (distToRocky < 90 && lookDir.y < -0.4) {
+                        if (item === 'wooden_pickaxe' || item === 'stone_pickaxe' || item === 'iron_pickaxe') {
+                            groundHits = (groundHits || 0) + 1;
+                            lastGroundHitTime = now;
+                            AudioSynth.playHit(camera.position.clone().add(new THREE.Vector3(0, -1.5, 0)));
+                            
+                            if (groundHits >= 6) {
+                                groundHits = 0;
+                                const scale = 2.0;
+                                spawnDroppedFood('stone', camera.position.clone().add(new THREE.Vector3(0, -1.0, 0)), scale);
+                                addChatMessage("Mined rocky ground!", "system");
+                                if (Math.random() < 0.50) {
+                                    spawnDroppedFood('raw_iron', camera.position.clone().add(new THREE.Vector3(0.2, -1.0, 0.2)), scale);
+                                    spawnDroppedFood('coal', camera.position.clone().add(new THREE.Vector3(-0.2, -1.0, -0.2)), scale);
+                                    addChatMessage("You found raw coal and raw iron in the rocky ground!", "system");
+                                }
+                            }
+                            didAction = true;
+                        }
+                    }
+                }
+                
+                if (didAction) {
+                    lastWeaponSwingTime = now;
+                    triggerWeaponSwing(item || 'fists');
+                } else if (!item) {
+                    lastWeaponSwingTime = now;
+                    triggerPunch();
+                    const punchObj = getPlacedObjectAimTarget();
+                    if (punchObj) {
+                        punchObj.hits = (punchObj.hits || 0) + 1;
+                        punchObj.lastHitTime = now;
+                        AudioSynth.playHit(punchObj.pos);
+                        updatePlacedObjectCracks(punchObj);
+                        if (punchObj.hits >= 3) {
+                            minePlacedObject(punchObj);
+                        }
+                    }
+                }
+            }
+        }
+
+        function handleKeyEInteraction() {
+            if (chestUIOpen) {
+                closeChestUI();
+                return true;
+            }
+            if (!gameActive || myHealth <= 0 || mapOpen || chatOpen || inventoryOpen) return false;
+
+            const currentItem = hotbarItems[selectedHotbarIndex];
+            if (currentItem === 'fishing_rod') {
+                let stringIndex = -1;
+                let isHotbar = false;
+                for (let i = 0; i < 9; i++) {
+                    if (hotbarItems[i] === 'string' && hotbarCounts[i] > 0) {
+                        stringIndex = i;
+                        isHotbar = true;
+                        break;
+                    }
+                }
+                if (stringIndex === -1) {
+                    for (let i = 0; i < 27; i++) {
+                        if (inventoryItems[i] === 'string' && inventoryCounts[i] > 0) {
+                            stringIndex = i;
+                            break;
+                        }
+                    }
+                }
+                
+                if (stringIndex !== -1) {
+                    if (isHotbar) {
+                        hotbarCounts[stringIndex]--;
+                        if (hotbarCounts[stringIndex] <= 0) hotbarItems[stringIndex] = null;
+                    } else {
+                        inventoryCounts[stringIndex]--;
+                        if (inventoryCounts[stringIndex] <= 0) inventoryItems[stringIndex] = null;
+                    }
+                    isRodBaited = true;
+                    updateHotbarUI();
+                    updateInventoryUI();
+                    AudioSynth.playWhoosh();
+                    addChatMessage("Fishing rod baited! Press F to cast.", "system");
+                } else {
+                    addChatMessage("You need String to bait the fishing rod! Craft string from Wool.", "system");
+                }
+                return true;
+            }
+ 
+            if (furnaceUIOpen) {
+                closeFurnaceUI();
+                return true;
+            }
+ 
+            if (ridingBoat) {
+                ridingBoat = false;
+                camera.position.y += 1.0;
+                activeBoat = null;
+                addChatMessage("Exited the boat.", "system");
+                return true;
+            }
+ 
+            let closestBoat = null;
+            let minBoatDist = Infinity;
+            placedObjects.forEach(obj => {
+                if (obj.type === 'boat') {
+                    const dx = camera.position.x - obj.pos.x;
+                    const dy = camera.position.y - obj.pos.y;
+                    const dz = camera.position.z - obj.pos.z;
+                    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                    if (dist < minBoatDist) {
+                        minBoatDist = dist;
+                        closestBoat = obj;
+                    }
+                }
+            });
+ 
+            if (closestBoat && minBoatDist < 4.0) {
+                ridingBoat = true;
+                activeBoat = closestBoat;
+                addChatMessage("Riding boat! WASD to steer, Space, F or E to dismount.", "system");
+                return true;
+            }
+ 
+            const aimedChest = getChestAimTarget();
+            if (aimedChest) {
+                openChestUI(aimedChest);
+                return true;
+            }
+
+            const aimedFurnace = getFurnaceAimTarget();
+            if (aimedFurnace) {
+                openFurnaceUI(aimedFurnace);
+                return true;
+            }
+
+            const aimedBed = getBedAimTarget();
+            if (aimedBed) {
+                trySleepInBed();
+                return true;
+            }
+
+            return false;
+        }
+
+        function openChestUI(chest) {
+            if (!gameActive || myHealth <= 0 || mapOpen || chatOpen || inventoryOpen) return;
+            
+            activeChest = chest;
+            chestUIOpen = true;
+            
+            // Lid animation
+            const lidMesh = chest.mesh.getObjectByName("lid");
+            const latchMesh = chest.mesh.getObjectByName("latch");
+            if (lidMesh) {
+                lidMesh.rotation.x = -Math.PI / 3;
+                lidMesh.position.y = 0.65;
+                lidMesh.position.z = -0.15;
+            }
+            if (latchMesh) {
+                latchMesh.rotation.x = -Math.PI / 3;
+                latchMesh.position.y = 0.55;
+                latchMesh.position.z = 0.35;
+            }
+            
+            if (!activeChest.chestInventoryItems) {
+                activeChest.chestInventoryItems = new Array(27).fill(null);
+                activeChest.chestInventoryCounts = new Array(27).fill(0);
+            }
+            
+            const overlay = document.getElementById('chest-overlay');
+            if (overlay) {
+                overlay.style.display = 'flex';
+            }
+            
+            exitPointerLock();
+            
+            moveForces.forward = false;
+            moveForces.backward = false;
+            moveForces.left = false;
+            moveForces.right = false;
+            
+            drawChestPlayerInventory();
+            updateChestUI();
+        }
+
+        function closeChestUI() {
+            const overlay = document.getElementById('chest-overlay');
+            if (overlay) {
+                overlay.style.display = 'none';
+            }
+            
+            if (heldItem) {
+                returnHeldItemToInventory();
+            }
+            
+            if (activeChest) {
+                // Restore lid position
+                const lidMesh = activeChest.mesh.getObjectByName("lid");
+                const latchMesh = activeChest.mesh.getObjectByName("latch");
+                if (lidMesh) {
+                    lidMesh.rotation.x = 0;
+                    lidMesh.position.y = 0.6;
+                    lidMesh.position.z = 0;
+                }
+                if (latchMesh) {
+                    latchMesh.rotation.x = 0;
+                    latchMesh.position.y = 0.5;
+                    latchMesh.position.z = 0.41;
+                }
+            }
+            
+            activeChest = null;
+            chestUIOpen = false;
+            
+            requestPointerLock();
+        }
+
+        function drawChestPlayerInventory() {
+            const container = document.getElementById('chest-player-inventory');
+            if (!container) return;
+            
+            let html = '';
+            for (let i = 0; i < 27; i++) {
+                const item = inventoryItems[i];
+                const count = inventoryCounts[i];
+                const icon = item ? getItemIconDataURL(item) : '';
+                const iconHTML = item ? `<img src="${icon}" class="slot-icon" />` : '';
+                const countHTML = (item && count > 1) ? `<span class="slot-count">${count}</span>` : '';
+                
+                html += `
+                    <div class="inventory-slot" onclick="onChestInventoryClick('inventory', ${i})" style="width: 50px; height: 50px; border: 1px solid rgba(255, 0, 127, 0.2); border-radius: 6px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.35); position: relative; cursor: pointer;">
+                        ${iconHTML}
+                        ${countHTML}
+                    </div>
+                `;
+            }
+            html += `<div style="grid-column: span 9; height: 10px;"></div>`;
+            for (let i = 0; i < 9; i++) {
+                const item = hotbarItems[i];
+                const count = hotbarCounts[i];
+                const icon = item ? getItemIconDataURL(item) : '';
+                const iconHTML = item ? `<img src="${icon}" class="slot-icon" />` : '';
+                const countHTML = (item && count > 1) ? `<span class="slot-count">${count}</span>` : '';
+                
+                const highlight = i === selectedHotbarIndex ? 'border-color: var(--magenta); box-shadow: 0 0 8px rgba(255, 0, 127, 0.4);' : '';
+                
+                html += `
+                    <div class="inventory-slot" onclick="onChestInventoryClick('hotbar', ${i})" style="width: 50px; height: 50px; border: 1px solid rgba(255, 0, 127, 0.2); border-radius: 6px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.35); position: relative; cursor: pointer; ${highlight}">
+                        ${iconHTML}
+                        ${countHTML}
+                    </div>
+                `;
+            }
+            container.innerHTML = html;
+        }
+
+        function updateChestUI() {
+            const container = document.getElementById('chest-slots-grid');
+            if (!container || !activeChest) return;
+            
+            let html = '';
+            const items = activeChest.chestInventoryItems || [];
+            const counts = activeChest.chestInventoryCounts || [];
+            
+            for (let i = 0; i < 27; i++) {
+                const item = items[i];
+                const count = counts[i];
+                const icon = item ? getItemIconDataURL(item) : '';
+                const iconHTML = item ? `<img src="${icon}" class="slot-icon" style="width: 32px; height: 32px; object-fit: contain;" />` : '';
+                const countHTML = (item && count > 1) ? `<span class="slot-count">${count}</span>` : '';
+                
+                html += `
+                    <div class="inventory-slot" onclick="onChestSlotClick(${i})" style="width: 50px; height: 50px; border: 1px solid rgba(255, 0, 127, 0.2); border-radius: 6px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.35); position: relative; cursor: pointer;">
+                        ${iconHTML}
+                        ${countHTML}
+                    </div>
+                `;
+            }
+            container.innerHTML = html;
+        }
+
+        function onChestSlotClick(index) {
+            if (!activeChest) return;
+            const items = activeChest.chestInventoryItems;
+            const counts = activeChest.chestInventoryCounts;
+            
+            if (heldItem) {
+                // Place item into chest slot
+                const tempType = items[index];
+                const tempCount = counts[index];
+                
+                if (!tempType) {
+                    items[index] = heldItem.type;
+                    counts[index] = heldItem.count;
+                    heldItem = null;
+                } else if (tempType === heldItem.type) {
+                    const canAdd = 64 - tempCount;
+                    const toAdd = Math.min(canAdd, heldItem.count);
+                    counts[index] += toAdd;
+                    heldItem.count -= toAdd;
+                    if (heldItem.count <= 0) heldItem = null;
+                } else {
+                    items[index] = heldItem.type;
+                    counts[index] = heldItem.count;
+                    heldItem = { type: tempType, count: tempCount };
+                }
+            } else {
+                // Pick item up from chest slot
+                if (items[index]) {
+                    heldItem = { type: items[index], count: counts[index] };
+                    items[index] = null;
+                    counts[index] = 0;
+                }
+            }
+            
+            updateChestUI();
+            drawChestPlayerInventory();
+            updateFloatingItemUI();
+        }
+
+        function onChestInventoryClick(type, index) {
+            onInventorySlotClick(type, index);
+            drawChestPlayerInventory();
+            updateChestUI();
+        }
+
+        function openFurnaceUI(furnace) {
+            if (!gameActive || myHealth <= 0 || mapOpen || chatOpen || inventoryOpen) return;
+            
+            activeFurnace = furnace;
+            furnaceUIOpen = true;
+            
+            if (!activeFurnace.furnaceState) {
+                activeFurnace.furnaceState = {
+                    inputItem: null,
+                    fuelItem: null,
+                    outputItem: null,
+                    fuelBurnTimeLeft: 0,
+                    fuelMaxBurnTime: 0,
+                    smeltProgress: 0
+                };
+            }
+            
+            const overlay = document.getElementById('furnace-overlay');
+            if (overlay) {
+                overlay.style.display = 'flex';
+            }
+            
+            exitPointerLock();
+            
+            moveForces.forward = false;
+            moveForces.backward = false;
+            moveForces.left = false;
+            moveForces.right = false;
+            
+            drawFurnacePlayerInventory();
+            updateFurnaceUI();
+        }
+
+        function closeFurnaceUI() {
+            const overlay = document.getElementById('furnace-overlay');
+            if (overlay) {
+                overlay.style.display = 'none';
+            }
+            
+            if (heldItem) {
+                returnHeldItemToInventory();
+            }
+            
+            activeFurnace = null;
+            furnaceUIOpen = false;
+            
+            requestPointerLock();
+        }
+
+        function onFurnaceSlotClick(slotName) {
+            if (!activeFurnace) return;
+            const state = activeFurnace.furnaceState;
+            
+            if (slotName === 'input') {
+                if (heldItem) {
+                    if (isSmeltable(heldItem.type)) {
+                        if (!state.inputItem) {
+                            state.inputItem = { type: heldItem.type, count: heldItem.count };
+                            heldItem = null;
+                        } else if (state.inputItem.type === heldItem.type) {
+                            const canAdd = 64 - state.inputItem.count;
+                            const toAdd = Math.min(canAdd, heldItem.count);
+                            state.inputItem.count += toAdd;
+                            heldItem.count -= toAdd;
+                            if (heldItem.count <= 0) heldItem = null;
+                        } else {
+                            const temp = state.inputItem;
+                            state.inputItem = { type: heldItem.type, count: heldItem.count };
+                            heldItem = temp;
+                        }
+                    } else {
+                        addChatMessage("This item cannot be smelted/cooked!", "system");
+                    }
+                } else {
+                    if (state.inputItem) {
+                        heldItem = { type: state.inputItem.type, count: state.inputItem.count };
+                        state.inputItem = null;
+                    }
+                }
+            } else if (slotName === 'fuel') {
+                if (heldItem) {
+                    if (isFuel(heldItem.type)) {
+                        if (!state.fuelItem) {
+                            state.fuelItem = { type: heldItem.type, count: heldItem.count };
+                            heldItem = null;
+                        } else if (state.fuelItem.type === heldItem.type) {
+                            const canAdd = 64 - state.fuelItem.count;
+                            const toAdd = Math.min(canAdd, heldItem.count);
+                            state.fuelItem.count += toAdd;
+                            heldItem.count -= toAdd;
+                            if (heldItem.count <= 0) heldItem = null;
+                        } else {
+                            const temp = state.fuelItem;
+                            state.fuelItem = { type: heldItem.type, count: heldItem.count };
+                            heldItem = temp;
+                        }
+                    } else {
+                        addChatMessage("This item cannot be used as fuel!", "system");
+                    }
+                } else {
+                    if (state.fuelItem) {
+                        heldItem = { type: state.fuelItem.type, count: state.fuelItem.count };
+                        state.fuelItem = null;
+                    }
+                }
+            } else if (slotName === 'output') {
+                if (state.outputItem) {
+                    if (heldItem) {
+                        if (heldItem.type === state.outputItem.type) {
+                            const canAdd = 64 - heldItem.count;
+                            const toAdd = Math.min(canAdd, state.outputItem.count);
+                            heldItem.count += toAdd;
+                            state.outputItem.count -= toAdd;
+                            if (state.outputItem.count <= 0) state.outputItem = null;
+                        } else {
+                            addChatMessage("Your hands are full with a different item!", "system");
+                        }
+                    } else {
+                        heldItem = { type: state.outputItem.type, count: state.outputItem.count };
+                        state.outputItem = null;
+                    }
+                }
+            }
+            
+            updateFurnaceUI();
+            drawFurnacePlayerInventory();
+            updateFloatingItemUI();
+        }
+
+        function onFurnaceInventoryClick(type, index) {
+            onInventorySlotClick(type, index);
+            drawFurnacePlayerInventory();
+        }
+
+        function drawFurnacePlayerInventory() {
+            const container = document.getElementById('furnace-player-inventory');
+            if (!container) return;
+            
+            let html = '';
+            for (let i = 0; i < 27; i++) {
+                const item = inventoryItems[i];
+                const count = inventoryCounts[i];
+                const icon = item ? getItemIconDataURL(item) : '';
+                const iconHTML = item ? `<img src="${icon}" class="slot-icon" />` : '';
+                const countHTML = (item && count > 1) ? `<span class="slot-count">${count}</span>` : '';
+                
+                html += `
+                    <div class="inventory-slot" onclick="onFurnaceInventoryClick('inventory', ${i})" style="width: 50px; height: 50px; border: 1px solid rgba(0, 240, 255, 0.2); border-radius: 6px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.35); position: relative; cursor: pointer;">
+                        ${iconHTML}
+                        ${countHTML}
+                    </div>
+                `;
+            }
+            html += `<div style="grid-column: span 9; height: 10px;"></div>`;
+            for (let i = 0; i < 9; i++) {
+                const item = hotbarItems[i];
+                const count = hotbarCounts[i];
+                const icon = item ? getItemIconDataURL(item) : '';
+                const iconHTML = item ? `<img src="${icon}" class="slot-icon" />` : '';
+                const countHTML = (item && count > 1) ? `<span class="slot-count">${count}</span>` : '';
+                
+                const highlight = i === selectedHotbarIndex ? 'border-color: var(--cyan); box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);' : '';
+                
+                html += `
+                    <div class="inventory-slot" onclick="onFurnaceInventoryClick('hotbar', ${i})" style="width: 50px; height: 50px; border: 1px solid rgba(0, 240, 255, 0.2); border-radius: 6px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.35); position: relative; cursor: pointer; ${highlight}">
+                        ${iconHTML}
+                        ${countHTML}
+                    </div>
+                `;
+            }
+            container.innerHTML = html;
+        }
+
+        function updateFurnaceUI() {
+            if (!activeFurnace || !activeFurnace.furnaceState) return;
+            const state = activeFurnace.furnaceState;
+            
+            const inputIconSpan = document.getElementById('furnace-input-icon');
+            const inputCountSpan = document.getElementById('furnace-input-count');
+            if (state.inputItem) {
+                inputIconSpan.innerHTML = `<img src="${getItemIconDataURL(state.inputItem.type)}" style="width: 32px; height: 32px; object-fit: contain;" />`;
+                inputCountSpan.innerText = state.inputItem.count > 1 ? state.inputItem.count : '';
+            } else {
+                inputIconSpan.innerHTML = '';
+                inputCountSpan.innerText = '';
+            }
+            
+            const fuelIconSpan = document.getElementById('furnace-fuel-icon');
+            const fuelCountSpan = document.getElementById('furnace-fuel-count');
+            if (state.fuelItem) {
+                fuelIconSpan.innerHTML = `<img src="${getItemIconDataURL(state.fuelItem.type)}" style="width: 32px; height: 32px; object-fit: contain;" />`;
+                fuelCountSpan.innerText = state.fuelItem.count > 1 ? state.fuelItem.count : '';
+            } else {
+                fuelIconSpan.innerHTML = '';
+                fuelCountSpan.innerText = '';
+            }
+            
+            const outputIconSpan = document.getElementById('furnace-output-icon');
+            const outputCountSpan = document.getElementById('furnace-output-count');
+            if (state.outputItem) {
+                outputIconSpan.innerHTML = `<img src="${getItemIconDataURL(state.outputItem.type)}" style="width: 32px; height: 32px; object-fit: contain;" />`;
+                outputCountSpan.innerText = state.outputItem.count > 1 ? state.outputItem.count : '';
+            } else {
+                outputIconSpan.innerHTML = '';
+                outputCountSpan.innerText = '';
+            }
+            
+            const progressFill = document.getElementById('furnace-progress-fill');
+            if (progressFill) {
+                progressFill.style.width = `${state.smeltProgress * 100}%`;
+            }
+            
+            const flameDiv = document.getElementById('furnace-flame');
+            if (flameDiv) {
+                if (state.fuelBurnTimeLeft > 0) {
+                    flameDiv.style.opacity = '1.0';
+                    flameDiv.style.textShadow = '0 0 10px rgba(255, 100, 0, 0.8)';
+                } else {
+                    flameDiv.style.opacity = '0.25';
+                    flameDiv.style.textShadow = 'none';
+                }
+            }
+        }
+
     Object.assign(window, {
         toggleInventoryOverlay,
         onInventorySlotClick,
+        onArmorSlotClick,
         selectHotbarSlot,
         craftItem,
+        closeFurnaceUI,
+        onFurnaceSlotClick,
+        onFurnaceInventoryClick,
     });
 
+    renderSavesList();
     initPeer();
 
     return () => {
         delete window.toggleInventoryOverlay;
         delete window.onInventorySlotClick;
+        delete window.onArmorSlotClick;
         delete window.selectHotbarSlot;
         delete window.craftItem;
+        delete window.closeFurnaceUI;
+        delete window.onFurnaceSlotClick;
+        delete window.onFurnaceInventoryClick;
     };
 }
