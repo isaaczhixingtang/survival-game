@@ -16,6 +16,11 @@ export const gameShellHtml = `<div id="canvas-container"></div>
             <h1 style="font-size: 3.5rem; margin-bottom: 20px;">Surv<span>ivalism</span></h1>
             <p style="margin-bottom: 40px; line-height: 1.6; font-size: 1.05rem; color: #b0b5c0;">Explore, build, and survive in an infinite 3D voxel world. Discover hidden caves, rich biomes, and tropical coral reefs.</p>
             <button id="btn-enter-game" class="btn btn-cyan" style="font-family: 'Orbitron', sans-serif; letter-spacing: 2px; width: 100%; font-size: 1.2rem; padding: 15px 30px; text-transform: uppercase;">Enter Game</button>
+            <div style="margin-top: 25px; display: flex; flex-direction: column; gap: 8px; width: 100%; text-align: left;">
+                <label for="player-name-input" style="font-family: 'Orbitron', sans-serif; font-size: 0.85rem; color: var(--cyan); text-shadow: 0 0 8px rgba(0, 240, 255, 0.4); letter-spacing: 1px; text-transform: uppercase; font-weight: bold;">Player Name</label>
+                <input id="player-name-input" class="text-input" type="text" value="player" style="width: 100%; background: rgba(5,5,10,0.6); border: 1px solid rgba(0, 240, 255, 0.3); color: white; padding: 12px 16px; border-radius: 8px; font-size: 1rem; outline: none; box-sizing: border-box; font-family: 'Orbitron', sans-serif; transition: all 0.3s ease; box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);" onfocus="this.style.borderColor='var(--cyan)'; this.style.boxShadow='0 0 10px rgba(0, 240, 255, 0.3)';" onblur="this.style.borderColor='rgba(0, 240, 255, 0.3)'; this.style.boxShadow='none';">
+                <span style="font-size: 0.75rem; color: #8a90a0; font-family: sans-serif; letter-spacing: 0.5px; opacity: 0.85; margin-left: 2px;">player, that is your name until you change it</span>
+            </div>
         </div>
     </div>
 
@@ -30,6 +35,16 @@ export const gameShellHtml = `<div id="canvas-container"></div>
                     
                     <button id="btn-show-new-game" class="btn btn-cyan" style="width: 100%; margin-bottom: 15px; font-family: 'Orbitron', sans-serif; letter-spacing: 1px; font-size: 1.05rem; padding: 12px 24px;">➕ New Game</button>
                     <button id="btn-customize-player" class="btn btn-orange" style="width: 100%; font-family: 'Orbitron', sans-serif; letter-spacing: 1px; font-size: 1.05rem; padding: 12px 24px; border: 1px solid rgba(255, 165, 0, 0.4); background: rgba(255, 165, 0, 0.05); color: #ffa500; text-shadow: 0 0 5px rgba(255, 165, 0, 0.3); transition: all 0.3s ease; border-radius: 8px; cursor: pointer;">👤 Customize Character</button>
+                    
+                    <!-- Join Multiplayer -->
+                    <div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.05); display: flex; flex-direction: column; gap: 10px;">
+                        <h3 style="font-family: 'Orbitron', sans-serif; font-size: 1rem; color: var(--cyan); text-shadow: var(--text-glow); text-transform: uppercase; margin: 0 0 5px 0; letter-spacing: 1px;">Join Multiplayer</h3>
+                        <div style="display: flex; gap: 10px; width: 100%;">
+                            <input id="join-id-input" class="text-input" type="text" placeholder="ENTER ROOM ID OR CODE" style="flex: 1; min-width: 0; text-transform: uppercase; text-align: left; background: rgba(5,5,10,0.6); border: 1px solid rgba(0, 240, 255, 0.2); color: white; padding: 10px 14px; border-radius: 8px; font-size: 0.9rem; font-family: 'Orbitron', sans-serif; outline: none; box-sizing: border-box;" maxLength="50">
+                            <button id="btn-join" class="btn btn-cyan" style="width: auto; flex-shrink: 0; padding: 10px 20px; font-family: 'Orbitron', sans-serif; font-size: 0.95rem; font-weight: bold; border-radius: 8px; cursor: pointer; border: 1px solid var(--cyan);">JOIN</button>
+                        </div>
+                        <div id="status-text" style="font-size: 0.75rem; color: #8a90a0; font-family: monospace; min-height: 15px; margin-top: 2px;"></div>
+                    </div>
                 </div>
                 
                 <div style="font-size: 0.75rem; color: #5a6070; font-family: monospace; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 15px;">
@@ -81,6 +96,16 @@ export const gameShellHtml = `<div id="canvas-container"></div>
                         <button id="btn-cheats-enabled" class="btn btn-secondary" style="flex: 1; padding: 10px; font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.02); color: #8a90a0;">Cheats Enabled</button>
                     </div>
                 </div>
+                
+                <!-- Physics Mode Selection -->
+                <div style="display: flex; flex-direction: column;">
+                    <label style="display: block; font-family: 'Orbitron', sans-serif; font-size: 0.85rem; color: var(--white); margin-bottom: 8px; letter-spacing: 0.5px;">Physics Mode</label>
+                    <div style="display: flex; gap: 10px;">
+                        <button id="btn-physics-normal" class="btn btn-secondary active" style="flex: 1; padding: 10px; font-size: 0.9rem; border: 1px solid var(--cyan); background: rgba(0, 240, 255, 0.1); color: var(--cyan);">Normal</button>
+                        <button id="btn-physics-moon" class="btn btn-secondary" style="flex: 1; padding: 10px; font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.02); color: #8a90a0;">Moon</button>
+                        <button id="btn-physics-bouncy" class="btn btn-secondary" style="flex: 1; padding: 10px; font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.02); color: #8a90a0;">Bouncy</button>
+                    </div>
+                </div>
             </div>
             
             <!-- Action Buttons -->
@@ -99,6 +124,11 @@ export const gameShellHtml = `<div id="canvas-container"></div>
             <div style="display: flex; flex-direction: row; gap: 25px; flex-wrap: wrap; text-align: left;">
                 <!-- Options (Left) -->
                 <div style="flex: 1.2; min-width: 280px; display: flex; flex-direction: column; gap: 15px;">
+                    <!-- Player Name -->
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                        <label for="customize-name-input" style="font-family: 'Orbitron', sans-serif; font-size: 0.85rem; color: var(--cyan); text-shadow: 0 0 8px rgba(0, 240, 255, 0.4); letter-spacing: 1px; text-transform: uppercase; font-weight: bold;">Player Name</label>
+                        <input id="customize-name-input" class="text-input" type="text" style="width: 100%; background: rgba(5,5,10,0.6); border: 1px solid rgba(0, 240, 255, 0.3); color: white; padding: 10px 14px; border-radius: 8px; font-size: 0.95rem; outline: none; box-sizing: border-box; font-family: 'Orbitron', sans-serif; transition: all 0.3s ease; box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);" onfocus="this.style.borderColor='var(--cyan)'; this.style.boxShadow='0 0 10px rgba(0, 240, 255, 0.3)';" onblur="this.style.borderColor='rgba(0, 240, 255, 0.3)'; this.style.boxShadow='none';">
+                    </div>
                     <!-- Skin Tone -->
                     <div>
                         <label style="display: block; font-family: 'Orbitron', sans-serif; font-size: 0.85rem; color: var(--white); margin-bottom: 6px; letter-spacing: 0.5px;">Skin Tone</label>
@@ -180,7 +210,7 @@ export const gameShellHtml = `<div id="canvas-container"></div>
             <div class="health-card player-card">
                 <div class="health-name">
                     <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--cyan); box-shadow:0 0 6px var(--cyan);"></span>
-                    YOU
+                    <span id="player-hud-name">YOU</span>
                 </div>
                 <div class="health-bar-bg">
                     <div id="player-health-fill" class="health-bar-fill" style="width: 100%;"></div>
@@ -191,7 +221,7 @@ export const gameShellHtml = `<div id="canvas-container"></div>
             <!-- Opponent Health -->
             <div class="health-card opponent-card">
                 <div class="health-name">
-                    OPPONENT
+                    <span id="opponent-hud-name">OPPONENT</span>
                     <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--magenta); box-shadow:0 0 6px var(--magenta);"></span>
                 </div>
                 <div class="health-bar-bg">
@@ -270,6 +300,24 @@ export const gameShellHtml = `<div id="canvas-container"></div>
             <div id="rematch-status" class="status" style="margin-top: 10px; color: var(--yellow);"></div>
         </div>
     </div>
+
+    <!-- Death Screen -->
+    <div id="death-screen" class="overlay interactive" style="display: none; background: rgba(20, 2, 5, 0.95); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); z-index: 1500;">
+        <div class="glass-panel" style="max-width: 500px; padding: 40px; border: 1px solid var(--magenta); box-shadow: 0 0 50px rgba(255, 0, 127, 0.2); text-align: center; display: flex; flex-direction: column; gap: 20px; align-items: center;">
+            <h1 id="death-screen-title" class="title-lose" style="font-family: 'Orbitron', sans-serif; font-size: 3rem; margin: 0; letter-spacing: 2px; text-shadow: var(--magenta-glow);">YOU DIED</h1>
+            <p id="death-screen-subtitle" style="font-size: 1.1rem; color: #b8bdcc; margin: 0;">Cause of death</p>
+            <div style="display: flex; flex-direction: column; gap: 15px; width: 100%; margin-top: 10px;">
+                <button id="btn-respawn-bed" class="btn btn-cyan" style="font-family: 'Orbitron', sans-serif; letter-spacing: 1px; width: 100%; font-size: 1.1rem; padding: 12px 24px; text-transform: uppercase; border: 1px solid var(--cyan); display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 0;">
+                    🛏️ Respawn at Bed
+                </button>
+                <div id="respawn-bed-status" style="font-size: 0.8rem; color: #8a90a0; margin-top: -8px; font-style: italic;"></div>
+                <button id="btn-respawn-spawn" class="btn btn-cyan" style="font-family: 'Orbitron', sans-serif; letter-spacing: 1px; width: 100%; font-size: 1.1rem; padding: 12px 24px; text-transform: uppercase; border: 1px solid var(--cyan); display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 0;">
+                    🧭 Respawn at Spawn
+                </button>
+            </div>
+        </div>
+    </div>
+
 
     <!-- Minecraft Active HUD -->
     <div id="minecraft-hud">
@@ -414,6 +462,16 @@ export const gameShellHtml = `<div id="canvas-container"></div>
                     <div style="display: flex; gap: 15px;">
                         <button id="btn-ingame-cheats-disabled" class="btn btn-secondary" style="flex: 1; padding: 10px; font-size: 0.9rem;">Disabled</button>
                         <button id="btn-ingame-cheats-enabled" class="btn btn-secondary" style="flex: 1; padding: 10px; font-size: 0.9rem;">Enabled</button>
+                    </div>
+                </div>
+                
+                <!-- Physics Mode Selection -->
+                <div style="display: flex; flex-direction: column;">
+                    <label style="display: block; font-family: 'Orbitron', sans-serif; font-size: 0.85rem; color: var(--white); margin-bottom: 8px; letter-spacing: 0.5px;">Physics Mode</label>
+                    <div style="display: flex; gap: 10px;">
+                        <button id="btn-ingame-physics-normal" class="btn btn-secondary" style="flex: 1; padding: 10px; font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.02); color: #8a90a0;">Normal</button>
+                        <button id="btn-ingame-physics-moon" class="btn btn-secondary" style="flex: 1; padding: 10px; font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.02); color: #8a90a0;">Moon</button>
+                        <button id="btn-ingame-physics-bouncy" class="btn btn-secondary" style="flex: 1; padding: 10px; font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.02); color: #8a90a0;">Bouncy</button>
                     </div>
                 </div>
             </div>

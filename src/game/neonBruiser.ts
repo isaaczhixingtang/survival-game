@@ -1,12 +1,50 @@
 // @ts-nocheck
 import * as ThreeLib from 'three';
-import PeerConstructor from 'peerjs';
 
 type Cleanup = () => void;
 
 export function initNeonBruiser(): Cleanup {
     const THREE = ThreeLib;
-    const Peer = PeerConstructor;
+
+
+    function safeGetItem(key: string, defaultValue: string = ''): string {
+        try {
+            return localStorage.getItem(key) || defaultValue;
+        } catch (e) {
+            console.error("Failed to get item from localStorage:", e);
+            return defaultValue;
+        }
+    }
+
+    function safeSetItem(key: string, value: string): void {
+        try {
+            localStorage.setItem(key, value);
+        } catch (e) {
+            console.error("Failed to set item in localStorage:", e);
+        }
+    }
+
+    function getSavedWorlds() {
+        try {
+            const item = localStorage.getItem('survivalism_saves');
+            const parsed = JSON.parse(item || '[]');
+            if (Array.isArray(parsed)) {
+                return parsed.filter(s => s && typeof s === 'object' && s.id);
+            }
+            return [];
+        } catch (e) {
+            console.error("Failed to parse saved worlds from localStorage:", e);
+            return [];
+        }
+    }
+
+    function saveWorldsList(saves: any[]) {
+        try {
+            localStorage.setItem('survivalism_saves', JSON.stringify(saves));
+        } catch (e) {
+            console.error("Failed to save worlds to localStorage:", e);
+        }
+    }
 
 // --- SOUND EFFECTS SYNTHESIZER (Web Audio API) ---
         const AudioSynth = {
@@ -46,6 +84,66 @@ export function initNeonBruiser(): Cleanup {
                 
                 osc.start();
                 osc.stop(now + 0.13);
+            },
+            playBounce(pos) {
+                this.init();
+                const now = this.ctx.currentTime;
+                const vol = this.getSpatialVolume(pos, 60);
+                if (vol <= 0.01) return;
+
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(120, now);
+                osc.frequency.exponentialRampToValueAtTime(360, now + 0.18);
+                
+                gain.gain.setValueAtTime(0.3 * vol, now);
+                gain.gain.exponentialRampToValueAtTime(0.005, now + 0.18);
+                
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                
+                osc.start();
+                osc.stop(now + 0.19);
+            },
+            playBreak(pos) {
+                this.init();
+                const now = this.ctx.currentTime;
+                const vol = this.getSpatialVolume(pos, 65);
+                if (vol <= 0.01) return;
+                
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(200, now);
+                osc.frequency.linearRampToValueAtTime(50, now + 0.25);
+                gain.gain.setValueAtTime(0.35 * vol, now);
+                gain.gain.exponentialRampToValueAtTime(0.005, now + 0.25);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(now + 0.26);
+
+                const bufferSize = this.ctx.sampleRate * 0.3;
+                const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = Math.random() * 2 - 1;
+                }
+                const noise = this.ctx.createBufferSource();
+                noise.buffer = buffer;
+                const filter = this.ctx.createBiquadFilter();
+                filter.type = 'bandpass';
+                filter.frequency.value = 180;
+                const noiseGain = this.ctx.createGain();
+                noiseGain.gain.setValueAtTime(0.4 * vol, now);
+                noiseGain.gain.exponentialRampToValueAtTime(0.005, now + 0.2);
+                noise.connect(filter);
+                filter.connect(noiseGain);
+                noiseGain.connect(this.ctx.destination);
+                noise.start();
+                noise.stop(now + 0.21);
             },
             playHit(pos) {
                 this.init();
@@ -400,6 +498,21 @@ export function initNeonBruiser(): Cleanup {
                     gain.connect(this.ctx.destination);
                     osc.start();
                     osc.stop(now + 0.13);
+                } else if (type === 'horse') {
+                    const osc = this.ctx.createOscillator();
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(380, now);
+                    osc.frequency.exponentialRampToValueAtTime(140, now + 0.4);
+                    const filter = this.ctx.createBiquadFilter();
+                    filter.type = 'lowpass';
+                    filter.frequency.value = 650;
+                    gain.gain.setValueAtTime(0.08 * vol, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+                    osc.connect(filter);
+                    filter.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start();
+                    osc.stop(now + 0.42);
                 }
             }
         };
@@ -430,6 +543,14 @@ export function initNeonBruiser(): Cleanup {
         const elMapOverlay = document.getElementById('map-overlay');
         const elCloseMapBtn = document.getElementById('btn-close-map');
 
+        // Death Screen DOM Elements
+        const elDeathScreen = document.getElementById('death-screen');
+        const elDeathScreenSubtitle = document.getElementById('death-screen-subtitle');
+        const btnRespawnBed = document.getElementById('btn-respawn-bed');
+        const btnRespawnSpawn = document.getElementById('btn-respawn-spawn');
+        const respawnBedStatus = document.getElementById('respawn-bed-status');
+
+
         // --- CHARACTER CUSTOMIZATION PREVIEW & UI LOGIC ---
         let previewScene, previewCamera, previewRenderer, previewMeshGroup, previewAnimationId;
         let previewSkinMat, previewHairMat, previewEyeMat, previewShirtMat, previewPantsMat;
@@ -441,11 +562,23 @@ export function initNeonBruiser(): Cleanup {
         elBtnCustomizePlayer.addEventListener('click', () => {
             elLobby.style.display = 'none';
             elCustomizeScreen.style.display = 'flex';
+            const customizeNameInput = document.getElementById('customize-name-input');
+            if (customizeNameInput) {
+                customizeNameInput.value = myAppearance.name || 'player';
+            }
             updateActiveSwatchesInUI();
             initCustomizePreview();
         });
 
         elBtnSaveCustomize.addEventListener('click', () => {
+            const customizeNameInput = document.getElementById('customize-name-input');
+            if (customizeNameInput) {
+                const newName = customizeNameInput.value.trim() || 'player';
+                myAppearance.name = newName;
+                safeSetItem('appearance_name', newName);
+                const startNameInput = document.getElementById('player-name-input');
+                if (startNameInput) startNameInput.value = newName;
+            }
             stopCustomizePreview();
             elCustomizeScreen.style.display = 'none';
             elLobby.style.display = 'flex';
@@ -456,6 +589,12 @@ export function initNeonBruiser(): Cleanup {
         const btnEnterGame = document.getElementById('btn-enter-game');
         if (btnEnterGame) {
             btnEnterGame.addEventListener('click', () => {
+                const nameInput = document.getElementById('player-name-input');
+                if (nameInput) {
+                    const newName = nameInput.value.trim() || 'player';
+                    myAppearance.name = newName;
+                    safeSetItem('appearance_name', newName);
+                }
                 const startScreen = document.getElementById('start-screen');
                 if (startScreen) startScreen.style.display = 'none';
                 if (elLobby) elLobby.style.display = 'flex';
@@ -470,6 +609,9 @@ export function initNeonBruiser(): Cleanup {
         const btnNewModeFreedom = document.getElementById('btn-mode-freedom');
         const btnNewCheatsDisabled = document.getElementById('btn-cheats-disabled');
         const btnNewCheatsEnabled = document.getElementById('btn-cheats-enabled');
+        const btnPhysicsNormal = document.getElementById('btn-physics-normal');
+        const btnPhysicsMoon = document.getElementById('btn-physics-moon');
+        const btnPhysicsBouncy = document.getElementById('btn-physics-bouncy');
 
         if (btnShowNewGame) {
             btnShowNewGame.addEventListener('click', () => {
@@ -483,8 +625,10 @@ export function initNeonBruiser(): Cleanup {
                 
                 currentGameMode = 'survival';
                 cheatsEnabled = false;
+                physicsMode = 'normal';
                 updateModeButtonsUI();
                 updateCheatsUIState();
+                updatePhysicsUIState();
             });
         }
 
@@ -531,6 +675,27 @@ export function initNeonBruiser(): Cleanup {
             });
         }
 
+        if (btnPhysicsNormal) {
+            btnPhysicsNormal.addEventListener('click', () => {
+                physicsMode = 'normal';
+                updatePhysicsUIState();
+            });
+        }
+
+        if (btnPhysicsMoon) {
+            btnPhysicsMoon.addEventListener('click', () => {
+                physicsMode = 'moon';
+                updatePhysicsUIState();
+            });
+        }
+
+        if (btnPhysicsBouncy) {
+            btnPhysicsBouncy.addEventListener('click', () => {
+                physicsMode = 'bouncy';
+                updatePhysicsUIState();
+            });
+        }
+
         // Pause Menu Listeners
         const btnResumeGame = document.getElementById('btn-resume-game');
         if (btnResumeGame) {
@@ -551,6 +716,7 @@ export function initNeonBruiser(): Cleanup {
                 
                 // Sync UI controls with current settings
                 updateCheatsUIState();
+                updatePhysicsUIState();
             });
         }
 
@@ -573,6 +739,83 @@ export function initNeonBruiser(): Cleanup {
             });
         }
 
+        // Respawn Player Helper
+        function respawnPlayer(atBed) {
+            myHealth = 100;
+            hunger = 100;
+            myBurnTime = 0;
+            updateHud();
+
+            let respawnedAtBed = false;
+            if (atBed) {
+                let targetBed = null;
+                // 1. Try to find the bed at the current respawnPoint
+                if (respawnPoint) {
+                    targetBed = placedObjects.find(obj => 
+                        obj.type === 'bed' &&
+                        Math.abs(obj.pos.x - respawnPoint.x) < 1.5 &&
+                        Math.abs(obj.pos.z - respawnPoint.z) < 1.5 &&
+                        isDimensionCave(obj.inCave) === isDimensionCave(respawnPoint.inCave)
+                    );
+                }
+                // 2. If no valid bed found at respawnPoint, find ANY bed in placedObjects
+                if (!targetBed) {
+                    const beds = placedObjects.filter(obj => obj.type === 'bed');
+                    if (beds.length > 0) {
+                        targetBed = beds[beds.length - 1]; // get the most recently placed bed
+                        respawnPoint = {
+                            x: targetBed.pos.x,
+                            y: targetBed.pos.y,
+                            z: targetBed.pos.z,
+                            inCave: isDimensionCave(targetBed.inCave)
+                        };
+                    }
+                }
+
+                if (targetBed) {
+                    playerInCave = isDimensionCave(targetBed.inCave);
+                    camera.position.set(targetBed.pos.x, targetBed.pos.y + 0.45 + 1.6, targetBed.pos.z);
+                    respawnedAtBed = true;
+                } else {
+                    addChatMessage("Your home bed was missing or obstructed", "system");
+                    respawnPoint = null;
+                }
+            }
+
+            if (!respawnedAtBed) {
+                playerInCave = false;
+                const spawnZ = isHost ? 12 : 28;
+                const spawnY = getTerrainHeight(60, spawnZ, false) + 1.6;
+                camera.position.set(60, spawnY, spawnZ);
+            }
+
+            updateChunks();
+
+            velocity.set(0, 0, 0);
+            knockbackVel.set(0, 0, 0);
+            isGrounded = true;
+
+            if (elDeathScreen) {
+                elDeathScreen.style.display = 'none';
+            }
+
+            syncPlayerPosition();
+            requestPointerLock();
+            saveWorld(false);
+        }
+
+        if (btnRespawnBed) {
+            btnRespawnBed.addEventListener('click', () => {
+                respawnPlayer(true);
+            });
+        }
+        if (btnRespawnSpawn) {
+            btnRespawnSpawn.addEventListener('click', () => {
+                respawnPlayer(false);
+            });
+        }
+
+
 
         const btnInGameCheatsDisabled = document.getElementById('btn-ingame-cheats-disabled');
         const btnInGameCheatsEnabled = document.getElementById('btn-ingame-cheats-enabled');
@@ -586,6 +829,28 @@ export function initNeonBruiser(): Cleanup {
             btnInGameCheatsEnabled.addEventListener('click', () => {
                 cheatsEnabled = true;
                 updateCheatsUIState();
+            });
+        }
+
+        const btnInGamePhysicsNormal = document.getElementById('btn-ingame-physics-normal');
+        const btnInGamePhysicsMoon = document.getElementById('btn-ingame-physics-moon');
+        const btnInGamePhysicsBouncy = document.getElementById('btn-ingame-physics-bouncy');
+        if (btnInGamePhysicsNormal) {
+            btnInGamePhysicsNormal.addEventListener('click', () => {
+                physicsMode = 'normal';
+                updatePhysicsUIState();
+            });
+        }
+        if (btnInGamePhysicsMoon) {
+            btnInGamePhysicsMoon.addEventListener('click', () => {
+                physicsMode = 'moon';
+                updatePhysicsUIState();
+            });
+        }
+        if (btnInGamePhysicsBouncy) {
+            btnInGamePhysicsBouncy.addEventListener('click', () => {
+                physicsMode = 'bouncy';
+                updatePhysicsUIState();
             });
         }
 
@@ -625,43 +890,6 @@ export function initNeonBruiser(): Cleanup {
                     btnSurvival.style.color = '#8a90a0';
                 }
             }
-
-            // Dedicated Tropical Reef turtle spawning
-            for (let c = 0; c < 8; c++) {
-                const angle = Math.random() * Math.PI * 2;
-                const dist = Math.random() * 70;
-                const ax = 0 + Math.cos(angle) * dist;
-                const az = -480 + Math.sin(angle) * dist;
-                const ay = getTerrainHeight(ax, az);
-                
-                if (ay <= WATER_Y) {
-                    const swimY = ay + (WATER_Y - ay) * 0.25;
-                    const mesh = createTurtleMesh();
-                    mesh.position.set(ax, swimY, az);
-                    scene.add(mesh);
-                    
-                    animals.push({
-                        id: Math.random().toString(36).substr(2, 6),
-                        type: 'turtle',
-                        mesh: mesh,
-                        x: ax,
-                        y: swimY,
-                        z: az,
-                        spawnX: ax,
-                        spawnZ: az,
-                        targetX: ax + (Math.random() - 0.5) * 20,
-                        targetZ: az + (Math.random() - 0.5) * 20,
-                        waitTime: Math.random() * 2.0,
-                        speed: 0.5 + Math.random() * 0.4, // Turtles swim slower and more gracefully!
-                        health: 30,
-                        maxHealth: 30,
-                        isDead: false,
-                        deathTime: 0,
-                        kx: 0,
-                        kz: 0
-                    });
-                }
-            }
         }
 
         function startNewWorld() {
@@ -674,6 +902,8 @@ export function initNeonBruiser(): Cleanup {
             
             minedStoneCoords = new Set();
             choppedTreeCoords = new Set();
+            minedCoralCoords = new Set();
+            minedDesertHoles = new Set();
             
             // Hide menu overlays
             const newGameScreen = document.getElementById('new-game-settings-screen');
@@ -783,7 +1013,7 @@ export function initNeonBruiser(): Cleanup {
                 
                 updatePreviewColors();
                 
-                localStorage.setItem('appearance_' + cat, color);
+                safeSetItem('appearance_' + cat, color);
             });
         });
 
@@ -953,22 +1183,69 @@ export function initNeonBruiser(): Cleanup {
             if (previewEyeMat) previewEyeMat.color.set(myAppearance.eye);
         }
 
+        const FIVE_LETTER_WORDS = [
+            'APPLE', 'BEAST', 'CABIN', 'DREAM', 'EARTH', 'FLAME', 'GIANT', 'HOUSE', 'LIGHT', 'NIGHT',
+            'OCEAN', 'PLANT', 'RIVER', 'STONE', 'WATER', 'WORLD', 'SPACE', 'STORM', 'CLOUD', 'CRAFT',
+            'TIGER', 'MAGIC', 'SHINE', 'SMILE', 'PIXEL', 'VOXEL', 'BLOCK', 'BRICK', 'CANDY', 'DANCE',
+            'FLUTE', 'GRASS', 'HAPPY', 'GREEN', 'LEMON', 'MANGO', 'PEACH', 'SWEET', 'SHARK', 'TRAIN',
+            'GHOST', 'PANDA', 'RIDER', 'SCOUT', 'STAGE', 'SHIELD', 'SWORD', 'STARS', 'HEART', 'ARROW'
+        ];
+
+        function generateFiveLetterWord() {
+            return FIVE_LETTER_WORDS[Math.floor(Math.random() * FIVE_LETTER_WORDS.length)];
+        }
+
         function generateShortId() {
-            const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-            let result = '';
-            for (let i = 0; i < 5; i++) {
-                result += chars.charAt(Math.floor(Math.random() * chars.length));
-            }
-            return result;
+            return generateFiveLetterWord();
         }
 
         // Initializing PeerJS
         let reconnectInterval = null;
-        function initPeer() {
+        let PeerClass = null;
+        async function initPeer(forcedId = null) {
             if (reconnectInterval) clearInterval(reconnectInterval);
 
-            const shortId = generateShortId();
-            peer = new Peer(shortId, { debug: 2 });
+            // If we have a peer with a different ID, destroy it first
+            if (peer) {
+                if (forcedId && peerId === forcedId) {
+                    return; // Already using this ID
+                }
+                try {
+                    peer.destroy();
+                } catch (e) {
+                    console.error("Error destroying peer:", e);
+                }
+                peer = null;
+                peerId = null;
+            }
+
+            if (!PeerClass) {
+                try {
+                    const peerModule = await import('peerjs');
+                    PeerClass = peerModule.Peer || peerModule.default || peerModule;
+                } catch (err) {
+                    console.error("Failed to dynamically import PeerJS:", err);
+                    if (elStatus) elStatus.innerText = "Multiplayer error: PeerJS failed to load.";
+                    return;
+                }
+            }
+
+            if (!PeerClass || typeof PeerClass !== 'function') {
+                console.error("PeerJS constructor not found! P2P multiplayer will be disabled.", PeerClass);
+                if (elStatus) elStatus.innerText = "Multiplayer error: PeerJS failed to load.";
+                return;
+            }
+
+            const shortId = forcedId || generateShortId();
+            try {
+                peer = new PeerClass(shortId, { debug: 2 });
+            } catch (err) {
+                console.error("Failed to initialize PeerJS:", err);
+                if (elStatus) elStatus.innerText = "Failed to initialize PeerJS.";
+                return;
+            }
+
+            if (!peer) return;
 
             peer.on('open', (id) => {
                 peerId = id;
@@ -1003,11 +1280,11 @@ export function initNeonBruiser(): Cleanup {
                 console.error("PeerJS Error:", err);
                 if (err.type === 'unavailable-id') {
                     setTimeout(() => {
-                        initPeer();
+                        initPeer(forcedId);
                     }, 300);
                     return;
                 }
-                elStatus.innerText = "Connection Error: " + err.type;
+                if (elStatus) elStatus.innerText = "Connection Error: " + err.type;
             });
 
             // Keepalive to automatically reconnect if broker server connection drops
@@ -1044,7 +1321,7 @@ export function initNeonBruiser(): Cleanup {
             elBtnHost.addEventListener('click', () => {
                 isHost = true;
                 if (elStatus) elStatus.innerText = "Waiting for an opponent to join...";
-                const saves = JSON.parse(localStorage.getItem('survivalism_saves') || '[]');
+                const saves = getSavedWorlds();
                 if (saves.length > 0) {
                     const mostRecentSave = saves[saves.length - 1];
                     loadWorld(mostRecentSave.id);
@@ -1058,7 +1335,7 @@ export function initNeonBruiser(): Cleanup {
             elBtnSolo.addEventListener('click', () => {
                 isHost = true;
                 isConnected = false;
-                const saves = JSON.parse(localStorage.getItem('survivalism_saves') || '[]');
+                const saves = getSavedWorlds();
                 if (saves.length > 0) {
                     const mostRecentSave = saves[saves.length - 1];
                     loadWorld(mostRecentSave.id);
@@ -1082,9 +1359,26 @@ export function initNeonBruiser(): Cleanup {
         function connectToOpponent(targetId) {
             const cleanId = targetId.trim().toUpperCase();
             if (elStatus) elStatus.innerText = "Connecting to room " + cleanId + "...";
-            conn = peer.connect(cleanId);
-            isHost = false;
-            setupConnection();
+            
+            const doConnect = () => {
+                conn = peer.connect(cleanId);
+                isHost = false;
+                setupConnection();
+            };
+
+            if (!peer || peer.destroyed) {
+                initPeer().then(() => {
+                    if (peer) {
+                        peer.once('open', () => {
+                            doConnect();
+                        });
+                    } else {
+                        if (elStatus) elStatus.innerText = "Error: Peer connection not initialized.";
+                    }
+                });
+            } else {
+                doConnect();
+            }
         }
 
         function setupConnection() {
@@ -1095,6 +1389,7 @@ export function initNeonBruiser(): Cleanup {
                 // Sync customized character appearance
                 sendNetworkMessage({
                     type: 'appearance',
+                    name: myAppearance.name || 'player',
                     skin: myAppearance.skin,
                     hair: myAppearance.hair,
                     eye: myAppearance.eye,
@@ -1124,6 +1419,7 @@ export function initNeonBruiser(): Cleanup {
 
         function handleDisconnect() {
             isConnected = false;
+            gameActive = false;
             exitPointerLock();
             elLobby.style.display = 'flex';
             elHud.style.display = 'none';
@@ -1136,7 +1432,10 @@ export function initNeonBruiser(): Cleanup {
 
         // --- THREE.JS GAME ENGINE SETUP ---
         let scene, camera, renderer, clock, placementPreview;
+        let fireTexture = null;
         let isLocked = false;
+        let ignoreNextEscKeyUp = false;
+        let justExitedPointerLock = false;
         let myHealth = 100;
         let oppHealth = 100;
         let gameActive = false;
@@ -1156,19 +1455,27 @@ export function initNeonBruiser(): Cleanup {
         let lastTurretSyncTime = 0;
 
         let myAppearance = {
-            skin: localStorage.getItem('appearance_skin') || '#ffdbac',
-            hair: localStorage.getItem('appearance_hair') || '#2c1d11',
-            eye: localStorage.getItem('appearance_eye') || '#0a1128',
-            shirt: localStorage.getItem('appearance_shirt') || '#2b6cb0',
-            pants: localStorage.getItem('appearance_pants') || '#2d3748'
+            name: safeGetItem('appearance_name', 'player'),
+            skin: safeGetItem('appearance_skin', '#ffdbac'),
+            hair: safeGetItem('appearance_hair', '#2c1d11'),
+            eye: safeGetItem('appearance_eye', '#0a1128'),
+            shirt: safeGetItem('appearance_shirt', '#2b6cb0'),
+            pants: safeGetItem('appearance_pants', '#2d3748')
         };
         let opponentAppearance = {
+            name: 'opponent',
             skin: '#ffdbac',
             hair: '#2c1d11',
             eye: '#0a1128',
             shirt: '#2b6cb0',
             pants: '#2d3748'
         };
+
+        // Initialize start screen name input field
+        const startNameInput = document.getElementById('player-name-input');
+        if (startNameInput) {
+            startNameInput.value = myAppearance.name || 'player';
+        }
 
         // Zombie Variables
         let zombies = []; // Host-side zombie state and meshes
@@ -1230,15 +1537,19 @@ export function initNeonBruiser(): Cleanup {
         let lastRegenTime = 0;
         let selectedHotbarIndex = 0;
         let inventoryOpen = false;
+        let isEating = false;
         let heldItem = null;
         let hotbarItems = new Array(9).fill(null);
         let hotbarCounts = new Array(9).fill(0);
+        let hotbarDurability = new Array(9).fill(null);
         hotbarItems[0] = 'wooden_axe';
         hotbarCounts[0] = 1;
+        hotbarDurability[0] = 60;
         hotbarItems[1] = 'crafting_bench';
         hotbarCounts[1] = 1;
         let inventoryItems = new Array(27).fill(null);
         let inventoryCounts = new Array(27).fill(0);
+        let inventoryDurability = new Array(27).fill(null);
         let armorItems = {
             helmet: null,
             chestplate: null,
@@ -1247,11 +1558,16 @@ export function initNeonBruiser(): Cleanup {
             boots: null
         };
         const placedObjects = [];
+        let respawnPoint = null; // { x, y, z, inCave }
         let activeFurnace = null;
         let furnaceUIOpen = false;
+        let activeChest = null;
+        let chestUIOpen = false;
         let lastMiningHoldTime = 0;
         let groundHits = 0;
         let lastGroundHitTime = 0;
+        let groundShovelHits = 0;
+        let lastGroundShovelHitTime = 0;
         const obtainedItems = new Set();
         obtainedItems.add('wooden_axe');
         obtainedItems.add('crafting_bench');
@@ -1259,6 +1575,8 @@ export function initNeonBruiser(): Cleanup {
         let animals = [];
         let droppedFoods = [];
         let worldTrees = [];
+        let worldStones = [];
+        let worldCorals = [];
         let isMouseDown = false;
         let mouseDownStartTime = 0;
         let choppingTreeTarget = null;
@@ -1285,24 +1603,41 @@ export function initNeonBruiser(): Cleanup {
         let lastPunchTime = 0, lastKickTime = 0, lastBowTime = 0;
 
         // First Person Meshes
-        let firstPersonHands, rightHand, leftHand, kickerLeg, bowGroup, woodenAxeGroup, woodenSwordGroup, woodenPickaxeGroup;
+        let firstPersonHands, rightHand, leftHand, kickerLeg, bowGroup, woodenAxeGroup, woodenSwordGroup, woodenPickaxeGroup, woodenShovelGroup, foodGroup;
         let localPunching = false, localKicking = false, localDrawingBow = false;
         let localPunchTimer = 0, localKickTimer = 0, localBowTimer = 0;
 
         // Projectiles
         const localArrows = [];
         const peerArrows = [];
+        const errorProjectiles = [];
+        const peerErrorProjectiles = [];
         let portalVortices = [];
         let lastQuantumDamageTime = 0;
 
         // Survivalism State & Third Person camera views
         let cameraView = 'first'; // 'first', 'third_back', 'third_front'
         let cheatsEnabled = false;
+        let currentWeather = 'clear'; // 'clear', 'rain', 'thunder'
+        let weatherTimer = 120.0; // random weather change countdown
+        let rainParticles = null;
+        let isLightningFlashing = false;
+        let lightningFlashDuration = 0;
+        let lightningFlashTimer = 5.0; // countdown to next lightning flash
+        let rainSoundSource = null;
+        let rainSoundGain = null;
         let currentGameMode = 'survival'; // 'survival', 'freedom'
+        let physicsMode = 'normal'; // 'normal', 'moon', 'bouncy'
         let currentWorldName = 'My World';
         let activeWorldId = null;
         let minedStoneCoords = new Set();
         let choppedTreeCoords = new Set();
+        let minedCoralCoords = new Set();
+        let minedDesertHoles = new Set();
+        let highestYSinceGrounded = 0;
+        let ridingBoat = false;
+        let ridingHorse = false;
+        let activeHorse = null;
 
         let playerMeshGroup = null;
         let playerHead = null, playerLArm = null, playerRArm = null, playerLLeg = null, playerRLeg = null;
@@ -1504,7 +1839,7 @@ export function initNeonBruiser(): Cleanup {
         const chunkWidth = 400;
 
         // Procedural Heightmap Formula
-        function getTerrainHeight(x, z, inCave = false) {
+        function getTerrainHeight(x, z, inCave = false, ignoreMinedHoles = false) {
             if (inCave) {
                 return getCaveFloorHeight(x, z);
             }
@@ -1670,6 +2005,22 @@ export function initNeonBruiser(): Cleanup {
                 const h5 = 1.5 + Math.sin(x * 0.05) * 0.5; // Flat plain
                 landH = Math.max(landH, -0.6 * (1 - w) + h5 * w);
             }
+
+            // 6. Rocky Island (center (420, 50), radius 120)
+            const d6 = Math.sqrt(Math.pow(x - 420, 2) + Math.pow(z - 50, 2));
+            if (d6 < 120) {
+                const w = Math.min(1.0, (120 - d6) / 30);
+                const h6 = 3.0 + Math.sin(x * 0.08) * Math.cos(z * 0.08) * 1.5;
+                landH = Math.max(landH, -0.6 * (1 - w) + h6 * w);
+            }
+            
+            // 7. Reef Island (center (0, -480), radius 120)
+            const d7 = Math.sqrt(Math.pow(x - 0, 2) + Math.pow(z + 480, 2));
+            if (d7 < 120) {
+                const w = Math.min(1.0, (120 - d7) / 30);
+                const h7 = -2.5 + Math.sin(x * 0.08) * Math.cos(z * 0.08) * 1.0;
+                landH = Math.max(landH, -0.6 * (1 - w) + h7 * w);
+            }
             
             h = landH;
             
@@ -1689,8 +2040,239 @@ export function initNeonBruiser(): Cleanup {
                 const factor = (r - 2999950) / 45;
                 h = h * (1 - Math.min(1.0, factor)) + factor * factor * 22.0;
             }
+            // Apply mined stone holes
+            if (!ignoreMinedHoles && worldStones && minedStoneCoords) {
+                for (let i = 0; i < worldStones.length; i++) {
+                    const stone = worldStones[i];
+                    const dx = x - stone.x;
+                    if (Math.abs(dx) >= 1.5) continue;
+                    const dz = z - stone.z;
+                    if (Math.abs(dz) >= 1.5) continue;
+                    
+                    const coordKey = `${stone.x.toFixed(1)},${stone.z.toFixed(1)}`;
+                    if (minedStoneCoords.has(coordKey)) {
+                        const dist = Math.sqrt(dx * dx + dz * dz);
+                        if (dist < 1.3) {
+                            const depth = 1.1;
+                            const factor = 1.0 - dist / 1.3;
+                            const smoothFactor = Math.sin(factor * Math.PI / 2);
+                            h -= depth * smoothFactor;
+                        }
+                    }
+                }
+            }
+            
+            // Apply mined desert holes
+            if (!ignoreMinedHoles && typeof minedDesertHoles !== 'undefined' && minedDesertHoles && minedDesertHoles.size > 0) {
+                const distToDesertVal = Math.sqrt(Math.pow(x - 350, 2) + Math.pow(z + 350, 2));
+                if (distToDesertVal < 185) {
+                    minedDesertHoles.forEach(coordKey => {
+                        const parts = coordKey.split(',');
+                        if (parts.length >= 2) {
+                            const hx = parseFloat(parts[0]);
+                            const hz = parseFloat(parts[1]);
+                            const depth = parts.length === 3 ? parseInt(parts[2]) : 1;
+                            const dx = x - hx;
+                            const dz = z - hz;
+                            if (Math.abs(dx) < 2.0 && Math.abs(dz) < 2.0) {
+                                const dist = Math.sqrt(dx * dx + dz * dz);
+                                if (dist < 1.8) {
+                                    const totalDepth = depth * 1.5;
+                                    const factor = 1.0 - dist / 1.8;
+                                    const smoothFactor = Math.sin(factor * Math.PI / 2);
+                                    h -= totalDepth * smoothFactor;
+                                }
+                            }
+                        }
+                    });
+                }
+            }
             
             return h;
+        }
+
+        function getTerrainColor(x, z, y) {
+            // Default forest green color
+            let r_col = 0.10, g_col = 0.22, b_col = 0.12;
+            
+            // Distances to biome centers
+            const d_desert = Math.sqrt(Math.pow(x - 350, 2) + Math.pow(z + 350, 2));
+            const d_cherry = Math.sqrt(Math.pow(x + 150, 2) + Math.pow(z + 350, 2));
+            const d_mountain = Math.sqrt(Math.pow(x - 250, 2) + Math.pow(z - 350, 2));
+            const d_village2 = Math.sqrt(Math.pow(x + 350, 2) + Math.pow(z - 250, 2));
+            const d_rocky = Math.sqrt(Math.pow(x - 420, 2) + Math.pow(z - 50, 2));
+            const d_reef = Math.sqrt(Math.pow(x - 0, 2) + Math.pow(z + 480, 2));
+            
+            const d_main = Math.sqrt(x * x + z * z);
+            
+            // Procedural green blend using perlin noise
+            const grassNoise = perlin2d(x * 0.12, z * 0.12) * 0.5 + 0.5;
+            const forestR = 65 / 255;
+            const forestG = 120 / 255;
+            const forestB = 55 / 255;
+            
+            const cherryR = 85 / 255;
+            const cherryG = 135 / 255;
+            const cherryB = 80 / 255;
+
+            let skipOceanBlend = false;
+
+            if (d_main < 210) {
+                r_col = forestR;
+                g_col = forestG;
+                b_col = forestB;
+                skipOceanBlend = true;
+            } else if (d_cherry < 180) {
+                r_col = cherryR;
+                g_col = cherryG;
+                b_col = cherryB;
+                skipOceanBlend = true;
+            } else if (d_desert < 180) {
+                const w = Math.min(1.0, (180 - d_desert) / 30);
+                
+                // Check if inside a dug hole with depth >= 2
+                let isDugStone = false;
+                if (typeof minedDesertHoles !== 'undefined' && minedDesertHoles && minedDesertHoles.size > 0) {
+                    minedDesertHoles.forEach(coordKey => {
+                        const parts = coordKey.split(',');
+                        if (parts.length >= 2) {
+                            const hx = parseFloat(parts[0]);
+                            const hz = parseFloat(parts[1]);
+                            const depth = parts.length === 3 ? parseInt(parts[2]) : 1;
+                            if (depth >= 2) {
+                                const dx = x - hx;
+                                const dz = z - hz;
+                                const dist = Math.sqrt(dx * dx + dz * dz);
+                                if (dist < 1.8) {
+                                    isDugStone = true;
+                                }
+                            }
+                        }
+                    });
+                }
+                
+                if (isDugStone) {
+                    skipOceanBlend = true;
+                    // Blend to stone grey color
+                    let stoneR = 0.45, stoneG = 0.45, stoneB = 0.45;
+                    
+                    // Deterministic vein generation based on vertex coordinates
+                    const hashVal = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453;
+                    const randVal = hashVal - Math.floor(hashVal);
+                    if (randVal < 0.08) {
+                        stoneR = 0.15; stoneG = 0.15; stoneB = 0.15; // Coal vein
+                    } else if (randVal < 0.14) {
+                        stoneR = 0.70; stoneG = 0.40; stoneB = 0.25; // Iron vein
+                    } else if (randVal < 0.18) {
+                        stoneR = 0.20; stoneG = 0.65; stoneB = 0.50; // Copper vein (oxidized)
+                    }
+                    
+                    r_col = r_col * (1 - w) + stoneR * w;
+                    g_col = g_col * (1 - w) + stoneG * w;
+                    b_col = b_col * (1 - w) + stoneB * w;
+                } else {
+                    // Blend to desert sand (0.85, 0.78, 0.50)
+                    r_col = r_col * (1 - w) + 0.85 * w;
+                    g_col = g_col * (1 - w) + 0.78 * w;
+                    b_col = b_col * (1 - w) + 0.50 * w;
+                }
+            } else if (d_mountain < 180) {
+                const w = Math.min(1.0, (180 - d_mountain) / 30);
+                let mr = 0.12, mg = 0.24, mb = 0.14;
+                if (y > 40) {
+                    mr = 0.95; mg = 0.95; mb = 0.95;
+                } else if (y > 15) {
+                    mr = 0.45; mg = 0.45; mb = 0.45;
+                }
+                r_col = r_col * (1 - w) + mr * w;
+                g_col = g_col * (1 - w) + mg * w;
+                b_col = b_col * (1 - w) + mb * w;
+            } else if (d_village2 < 180) {
+                r_col = forestR;
+                g_col = forestG;
+                b_col = forestB;
+                skipOceanBlend = true;
+            } else if (d_rocky < 120) {
+                const w = Math.min(1.0, (120 - d_rocky) / 30);
+                const rr = 0.45, rg = 0.45, rb = 0.45;
+                r_col = r_col * (1 - w) + rr * w;
+                g_col = g_col * (1 - w) + rg * w;
+                b_col = b_col * (1 - w) + rb * w;
+            } else if (d_reef < 120) {
+                const w = Math.min(1.0, (120 - d_reef) / 30);
+                r_col = r_col * (1 - w) + 0.2 * w;
+                g_col = g_col * (1 - w) + 0.6 * w;
+                b_col = b_col * (1 - w) + 0.55 * w;
+            }
+            
+            if (y < -0.5 && !skipOceanBlend) {
+                const depthFactor = Math.min(1.0, (-0.5 - y) / 5.0);
+                r_col = r_col * (1 - depthFactor) + 0.25 * depthFactor;
+                g_col = g_col * (1 - depthFactor) + 0.22 * depthFactor;
+                b_col = b_col * (1 - depthFactor) + 0.18 * depthFactor;
+            }
+            
+            return { r: r_col, g: g_col, b: b_col };
+        }
+
+        function updateTerrainMeshNear(stoneX, stoneZ) {
+            if (!terrainGeometry) return;
+            const positions = terrainGeometry.attributes.position.array;
+            const colors = terrainGeometry.attributes.color.array;
+            
+            for (let i = 0; i < positions.length; i += 3) {
+                const x = positions[i];
+                const z = positions[i+2];
+                
+                const dx = x - stoneX;
+                const dz = z - stoneZ;
+                const dist = Math.sqrt(dx * dx + dz * dz);
+                if (dist < 3.0) {
+                    const newY = getTerrainHeight(x, z, false);
+                    positions[i+1] = newY;
+                    
+                    const col = getTerrainColor(x, z, newY);
+                    colors[i] = col.r;
+                    colors[i+1] = col.g;
+                    colors[i+2] = col.b;
+                }
+            }
+            terrainGeometry.attributes.position.needsUpdate = true;
+            terrainGeometry.attributes.color.needsUpdate = true;
+            terrainGeometry.computeVertexNormals();
+        }
+
+        function addMinedDesertHole(hx, hz, sendNetwork = true) {
+            const prefix = `${hx.toFixed(1)},${hz.toFixed(1)},`;
+            let foundKey = null;
+            let currentDepth = 0;
+            
+            for (const key of minedDesertHoles) {
+                if (key.startsWith(prefix) || key === `${hx.toFixed(1)},${hz.toFixed(1)}`) {
+                    foundKey = key;
+                    const parts = key.split(',');
+                    currentDepth = parts.length === 3 ? parseInt(parts[2]) : 1;
+                    break;
+                }
+            }
+            
+            if (foundKey) {
+                minedDesertHoles.delete(foundKey);
+            }
+            
+            const newDepth = currentDepth + 1;
+            const newKey = `${hx.toFixed(1)},${hz.toFixed(1)},${newDepth}`;
+            minedDesertHoles.add(newKey);
+
+            if (sendNetwork && isConnected) {
+                sendNetworkMessage({
+                    type: 'dig-desert-hole',
+                    x: hx,
+                    z: hz
+                });
+            }
+
+            return newDepth;
         }
 
         function requestPointerLock() {
@@ -1731,11 +2313,24 @@ export function initNeonBruiser(): Cleanup {
                     isLocked = false;
                     elCrosshair.style.display = 'none';
                     if (gameActive && myHealth > 0 && oppHealth > 0) {
-                        if (chatOpen || mapOpen || inventoryOpen || furnaceUIOpen || chestUIOpen) {
+                        const isIngameSettingsOpen = ingameSettings && ingameSettings.style.display === 'flex';
+                        const isPauseMenuOpen = pauseMenu && pauseMenu.style.display === 'flex';
+                        if (chatOpen || mapOpen || inventoryOpen || furnaceUIOpen || chestUIOpen || isIngameSettingsOpen || isPauseMenuOpen) {
                             if (prompt) prompt.style.display = 'none';
                         } else {
-                            if (pauseMenu) pauseMenu.style.display = 'flex';
-                            if (prompt) prompt.style.display = 'none';
+                            // Only open the pause menu if the document has focus and is not hidden.
+                            // If pointer lock is lost because of tab switch or focus loss, let the blur/visibility change handlers save and exit instead of opening the pause menu.
+                            const isFocusLost = !document.hasFocus() || document.visibilityState === 'hidden';
+                            if (!isFocusLost) {
+                                if (pauseMenu) pauseMenu.style.display = 'flex';
+                                if (prompt) prompt.style.display = 'none';
+                                
+                                // Set flag to prevent onKeyUp from immediately closing the pause menu
+                                justExitedPointerLock = true;
+                                setTimeout(() => {
+                                    justExitedPointerLock = false;
+                                }, 100);
+                            }
                         }
                     }
                 }
@@ -1872,55 +2467,8 @@ export function initNeonBruiser(): Cleanup {
                 const y = getTerrainHeight(x, z);
                 positions[i+1] = y; // Adjust Y coordinate
                 
-                // Default forest green color
-                let r_col = 0.10, g_col = 0.22, b_col = 0.12;
-                
-                // Distances to biome centers
-                const d_desert = Math.sqrt(Math.pow(x - 350, 2) + Math.pow(z + 350, 2));
-                const d_cherry = Math.sqrt(Math.pow(x + 150, 2) + Math.pow(z + 350, 2));
-                const d_mountain = Math.sqrt(Math.pow(x - 250, 2) + Math.pow(z - 350, 2));
-                const d_village2 = Math.sqrt(Math.pow(x + 350, 2) + Math.pow(z - 250, 2));
-                
-                if (d_desert < 180) {
-                    const w = Math.min(1.0, (180 - d_desert) / 30);
-                    // Blend to desert sand (0.85, 0.78, 0.50)
-                    r_col = r_col * (1 - w) + 0.85 * w;
-                    g_col = g_col * (1 - w) + 0.78 * w;
-                    b_col = b_col * (1 - w) + 0.50 * w;
-                } else if (d_cherry < 180) {
-                    const w = Math.min(1.0, (180 - d_cherry) / 30);
-                    // Blend to vibrant light grass green (0.28, 0.58, 0.24)
-                    r_col = r_col * (1 - w) + 0.28 * w;
-                    g_col = g_col * (1 - w) + 0.58 * w;
-                    b_col = b_col * (1 - w) + 0.24 * w;
-                } else if (d_mountain < 180) {
-                    const w = Math.min(1.0, (180 - d_mountain) / 30);
-                    let mr = 0.12, mg = 0.24, mb = 0.14;
-                    if (y > 40) {
-                        mr = 0.95; mg = 0.95; mb = 0.95; // snow
-                    } else if (y > 15) {
-                        mr = 0.45; mg = 0.45; mb = 0.45; // rock
-                    }
-                    r_col = r_col * (1 - w) + mr * w;
-                    g_col = g_col * (1 - w) + mg * w;
-                    b_col = b_col * (1 - w) + mb * w;
-                } else if (d_village2 < 180) {
-                    const w = Math.min(1.0, (180 - d_village2) / 30);
-                    // Blend to savanna golden-yellow (0.72, 0.62, 0.35)
-                    r_col = r_col * (1 - w) + 0.72 * w;
-                    g_col = g_col * (1 - w) + 0.62 * w;
-                    b_col = b_col * (1 - w) + 0.35 * w;
-                }
-                
-                // Ocean bed sand blend
-                if (y < -0.5) {
-                    const depthFactor = Math.min(1.0, (-0.5 - y) / 5.0);
-                    r_col = r_col * (1 - depthFactor) + 0.25 * depthFactor;
-                    g_col = g_col * (1 - depthFactor) + 0.22 * depthFactor;
-                    b_col = b_col * (1 - depthFactor) + 0.18 * depthFactor;
-                }
-                
-                colors.push(r_col, g_col, b_col);
+                const col = getTerrainColor(x, z, y);
+                colors.push(col.r, col.g, col.b);
             }
             terrainGeometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
             terrainGeometry.computeVertexNormals();
@@ -1935,8 +2483,20 @@ export function initNeonBruiser(): Cleanup {
             terrainMesh.name = 'staticTerrain';
             scene.add(terrainMesh);
 
-            // Massive Ocean water plane
-            const oceanGeo = new THREE.PlaneGeometry(1200, 1200);
+            // Massive Ocean water plane with a hole for the desert island
+            const oceanShape = new THREE.Shape();
+            oceanShape.moveTo(-600, -600);
+            oceanShape.lineTo(600, -600);
+            oceanShape.lineTo(600, 600);
+            oceanShape.lineTo(-600, 600);
+            oceanShape.closePath();
+            
+            // Desert island center (350, -350). Since rotated around X by -90 deg, world Z of -350 maps to shape Y of 350.
+            const desertHole = new THREE.Path();
+            desertHole.absarc(350, 350, 170, 0, Math.PI * 2, true);
+            oceanShape.holes.push(desertHole);
+            
+            const oceanGeo = new THREE.ShapeGeometry(oceanShape);
             const oceanMat = new THREE.MeshStandardMaterial({
                 color: 0x0f3060, // Deep ocean blue
                 roughness: 0.15,
@@ -2067,7 +2627,7 @@ export function initNeonBruiser(): Cleanup {
                 const isPauseMenuOpen = pauseMenu && pauseMenu.style.display === 'flex';
                 const isIngameSettingsOpen = ingameSettings && ingameSettings.style.display === 'flex';
                 
-                if (gameActive && !mapOpen && !chatOpen && !inventoryOpen && !furnaceUIOpen && !isPauseMenuOpen && !isIngameSettingsOpen && elLobby.style.display === 'none' && elGameOver.style.display !== 'flex') {
+                if (gameActive && !mapOpen && !chatOpen && !inventoryOpen && !furnaceUIOpen && !chestUIOpen && !isPauseMenuOpen && !isIngameSettingsOpen && elLobby.style.display === 'none' && elGameOver.style.display !== 'flex') {
                     if (event.target.tagName !== 'BUTTON' && event.target.tagName !== 'INPUT' && event.target.tagName !== 'SELECT') {
                         requestPointerLock();
                     }
@@ -2075,29 +2635,7 @@ export function initNeonBruiser(): Cleanup {
             });
             initPointerLock();
 
-            function autoSaveAndExit() {
-                if (!gameActive) return;
-                saveWorld();
-                gameActive = false;
-                exitPointerLock();
-                
-                const pauseMenu = document.getElementById('pause-menu');
-                if (pauseMenu) pauseMenu.style.display = 'none';
-                
-                if (elHud) elHud.style.display = 'none';
-                if (elCrosshair) elCrosshair.style.display = 'none';
-                if (elLobby) elLobby.style.display = 'flex';
-                
-                resetGameScene();
-                renderSavesList();
-            }
-
-            window.addEventListener('blur', autoSaveAndExit);
-            document.addEventListener('visibilitychange', () => {
-                if (document.visibilityState === 'hidden') {
-                    autoSaveAndExit();
-                }
-            });
+            // autoSaveAndExit has been moved to the outer initNeonBruiser scope to prevent memory leaks and properly handle page unload/tab hide.
 
             // Keyboard Listeners
             window.addEventListener('keydown', onKeyDown);
@@ -2134,6 +2672,7 @@ export function initNeonBruiser(): Cleanup {
                 elChatInput.addEventListener('keydown', (e) => {
                     if (e.key === 'Escape') {
                         e.preventDefault();
+                        ignoreNextEscKeyUp = true;
                         toggleChat();
                     } else if (e.key === 'Enter') {
                         e.preventDefault();
@@ -2527,6 +3066,253 @@ export function initNeonBruiser(): Cleanup {
             }
         }
 
+        function spawnReefCorals() {
+            const coralColors = [
+                0xff007f, // Neon Pink
+                0x00f0ff, // Neon Cyan
+                0xffea00, // Neon Yellow
+                0xff5e00, // Neon Orange
+                0xaa00ff, // Neon Purple
+                0xff00aa  // Magenta
+            ];
+            
+            for (let i = 0; i < 90; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = Math.random() * 85;
+                const cx = 0 + Math.cos(angle) * dist;
+                const cz = -480 + Math.sin(angle) * dist;
+                
+                const coordKey = `${cx.toFixed(1)},${cz.toFixed(1)}`;
+                if (minedCoralCoords && minedCoralCoords.has(coordKey)) {
+                    continue;
+                }
+                
+                const cy = getTerrainHeight(cx, cz);
+                if (cy > WATER_Y) continue; // Must be underwater
+                
+                const coralColor = coralColors[Math.floor(Math.random() * coralColors.length)];
+                const coralMat = new THREE.MeshStandardMaterial({
+                    color: coralColor,
+                    roughness: 0.9,
+                    emissive: coralColor,
+                    emissiveIntensity: 0.15
+                });
+                
+                const coralType = Math.floor(Math.random() * 3); // 3 different coral styles
+                const coralGroup = new THREE.Group();
+                coralGroup.position.set(cx, cy, cz);
+                
+                if (coralType === 0) {
+                    // Tube/Cylinder coral
+                    const numTubes = 3 + Math.floor(Math.random() * 3);
+                    for (let j = 0; j < numTubes; j++) {
+                        const th = 0.5 + Math.random() * 0.8;
+                        const tr = 0.1 + Math.random() * 0.1;
+                        const tube = new THREE.Mesh(new THREE.CylinderGeometry(tr, tr, th, 8), coralMat);
+                        tube.position.set((Math.random() - 0.5) * 0.4, th/2, (Math.random() - 0.5) * 0.4);
+                        tube.rotation.x = (Math.random() - 0.5) * 0.3;
+                        tube.rotation.z = (Math.random() - 0.5) * 0.3;
+                        tube.castShadow = true;
+                        coralGroup.add(tube);
+                    }
+                } else if (coralType === 1) {
+                    // Brain coral (spherical clusters)
+                    const baseGeo = new THREE.SphereGeometry(0.35, 8, 8);
+                    const baseMesh = new THREE.Mesh(baseGeo, coralMat);
+                    baseMesh.position.y = 0.25;
+                    baseMesh.scale.set(1.2, 0.8, 1.2);
+                    baseMesh.castShadow = true;
+                    coralGroup.add(baseMesh);
+                    
+                    const numBubbles = 4 + Math.floor(Math.random() * 4);
+                    for (let j = 0; j < numBubbles; j++) {
+                        const bub = new THREE.Mesh(new THREE.SphereGeometry(0.15 + Math.random() * 0.1, 8, 8), coralMat);
+                        bub.position.set(
+                            (Math.random() - 0.5) * 0.5,
+                            0.25 + (Math.random() - 0.5) * 0.2,
+                            (Math.random() - 0.5) * 0.5
+                        );
+                        bub.castShadow = true;
+                        coralGroup.add(bub);
+                    }
+                } else {
+                    // Fan/Plate coral (stacked boxes)
+                    const baseMesh = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.6, 0.2), coralMat);
+                    baseMesh.position.y = 0.3;
+                    baseMesh.castShadow = true;
+                    coralGroup.add(baseMesh);
+                    
+                    const numPlates = 2 + Math.floor(Math.random() * 3);
+                    for (let j = 0; j < numPlates; j++) {
+                        const plate = new THREE.Mesh(new THREE.BoxGeometry(0.6 + Math.random()*0.4, 0.08, 0.6 + Math.random()*0.4), coralMat);
+                        plate.position.set((Math.random() - 0.5)*0.2, 0.2 + j * 0.25, (Math.random() - 0.5)*0.2);
+                        plate.rotation.z = (Math.random() - 0.5)*0.4;
+                        plate.rotation.x = (Math.random() - 0.5)*0.4;
+                        plate.castShadow = true;
+                        coralGroup.add(plate);
+                    }
+                }
+                
+                scene.add(coralGroup);
+                
+                worldCorals.push({
+                    mesh: coralGroup,
+                    group: coralGroup,
+                    color: coralColor,
+                    x: cx,
+                    y: cy,
+                    z: cz,
+                    hits: 0,
+                    lastHitTime: 0
+                });
+            }
+        }
+        
+        function resetWorldCorals() {
+            worldCorals.forEach(coral => {
+                coral.hits = 0;
+                coral.lastHitTime = 0;
+                coral.mesh.visible = true;
+                
+                const coordKey = `${coral.x.toFixed(1)},${coral.z.toFixed(1)}`;
+                if (minedCoralCoords.has(coordKey)) {
+                    coral.mesh.visible = false;
+                }
+            });
+        }
+
+        function spawnRockyPlainsResources() {
+            for (let i = 0; i < 35; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = Math.random() * 95;
+                const rx = 420 + Math.cos(angle) * dist;
+                const rz = 50 + Math.sin(angle) * dist;
+                
+                const coordKey = `${rx.toFixed(1)},${rz.toFixed(1)}`;
+                if (minedStoneCoords && minedStoneCoords.has(coordKey)) {
+                    continue;
+                }
+                
+                const ry = getTerrainHeight(rx, rz);
+                if (ry <= WATER_Y) continue; // must be above water
+                
+                const rand = Math.random();
+                let type;
+                let color;
+                let isMetal = false;
+                
+                if (rand < 0.40) {
+                    type = 'limestone';
+                    color = 0xeae6df; // white/cream
+                } else if (rand < 0.65) {
+                    type = 'coal_ore';
+                    color = 0x222222; // black coal
+                } else if (rand < 0.85) {
+                    type = 'iron_ore';
+                    color = 0xa34f40; // reddish-brown rust
+                    isMetal = true;
+                } else {
+                    type = 'copper_ore';
+                    color = 0xe88d72; // copper
+                    isMetal = true;
+                }
+                
+                const stoneMat = new THREE.MeshStandardMaterial({
+                    color: 0x777777, // Neutral grey stone
+                    roughness: 0.9,
+                    metalness: 0.1
+                });
+                
+                const oreMat = new THREE.MeshStandardMaterial({
+                    color: color,
+                    roughness: 0.9,
+                    metalness: isMetal ? 0.6 : 0.1
+                });
+                
+                const stoneGroup = new THREE.Group();
+                stoneGroup.position.set(rx, ry, rz);
+                // Flatten and broaden the stone group so it is embedded in the ground
+                stoneGroup.scale.set(1.2, 0.25, 1.2);
+                
+                const baseRadius = 0.5 + Math.random() * 0.25;
+                const baseGeo = new THREE.DodecahedronGeometry(baseRadius);
+                const baseMesh = new THREE.Mesh(baseGeo, stoneMat);
+                // Place the base mesh lower to embed it in the terrain
+                baseMesh.position.y = 0.05;
+                baseMesh.castShadow = true;
+                baseMesh.receiveShadow = true;
+                stoneGroup.add(baseMesh);
+                
+                const numSub = 1 + Math.floor(Math.random() * 2);
+                const subMeshes = [];
+                for (let j = 0; j < numSub; j++) {
+                    const subRadius = 0.25 + Math.random() * 0.2;
+                    const subGeo = new THREE.DodecahedronGeometry(subRadius);
+                    const subMesh = new THREE.Mesh(subGeo, stoneMat);
+                    // Place the sub-meshes lower as well
+                    subMesh.position.set(
+                        (Math.random() - 0.5) * 0.5,
+                        0.0 + Math.random() * 0.1,
+                        (Math.random() - 0.5) * 0.5
+                    );
+                    subMesh.castShadow = true;
+                    subMesh.receiveShadow = true;
+                    stoneGroup.add(subMesh);
+                    subMeshes.push(subMesh);
+                }
+                
+                const numSpecks = 4 + Math.floor(Math.random() * 3);
+                for (let k = 0; k < numSpecks; k++) {
+                    const targetMesh = (Math.random() < 0.6 || subMeshes.length === 0) ? baseMesh : subMeshes[Math.floor(Math.random() * subMeshes.length)];
+                    const targetRadius = targetMesh === baseMesh ? baseRadius : 0.25;
+                    
+                    const theta = Math.random() * Math.PI * 2;
+                    const phi = Math.acos((Math.random() * 2) - 1);
+                    const dx = Math.sin(phi) * Math.cos(theta);
+                    const dy = Math.sin(phi) * Math.sin(theta);
+                    const dz = Math.cos(phi);
+                    
+                    const speckRadius = 0.08 + Math.random() * 0.06;
+                    const speckGeo = new THREE.DodecahedronGeometry(speckRadius);
+                    const speckMesh = new THREE.Mesh(speckGeo, oreMat);
+                    
+                    speckMesh.position.set(
+                        targetMesh.position.x + dx * targetRadius * 0.95,
+                        targetMesh.position.y + dy * targetRadius * 0.95,
+                        targetMesh.position.z + dz * targetRadius * 0.95
+                    );
+                    speckMesh.castShadow = true;
+                    stoneGroup.add(speckMesh);
+                }
+                
+                scene.add(stoneGroup);
+                
+                worldStones.push({
+                    mesh: stoneGroup,
+                    group: stoneGroup,
+                    x: rx,
+                    y: ry,
+                    z: rz,
+                    type: type,
+                    hits: 0,
+                    lastHitTime: 0
+                });
+            }
+        }
+        
+        function resetWorldStones() {
+            worldStones.forEach(stone => {
+                stone.hits = 0;
+                stone.lastHitTime = 0;
+                stone.mesh.visible = true;
+                
+                const coordKey = `${stone.x.toFixed(1)},${stone.z.toFixed(1)}`;
+                if (minedStoneCoords.has(coordKey)) {
+                    stone.mesh.visible = false;
+                }
+            });
+        }
+
         // Spawn trees and houses procedurally
         function spawnEnvironment() {
             // 1. Spawning FOREST (around x: -80, z: 80)
@@ -2556,6 +3342,24 @@ export function initNeonBruiser(): Cleanup {
                 trunk.position.y = 1.75;
                 trunk.castShadow = true;
                 treeGroup.add(trunk);
+
+                // Leaves
+                const f1 = new THREE.Mesh(new THREE.SphereGeometry(1.5, 8, 8), foliageMat);
+                f1.position.y = 3.5;
+                f1.castShadow = true;
+                treeGroup.add(f1);
+
+                const f2 = new THREE.Mesh(new THREE.SphereGeometry(1.0, 8, 8), foliageMat);
+                f2.position.set(0.7, 4.0, 0.4);
+                f2.castShadow = true;
+                treeGroup.add(f2);
+
+                const f3 = new THREE.Mesh(new THREE.SphereGeometry(1.0, 8, 8), foliageMat);
+                f3.position.set(-0.7, 4.0, -0.4);
+                f3.castShadow = true;
+                treeGroup.add(f3);
+
+                scene.add(treeGroup);
 
                 const leaves = [];
                 treeGroup.children.forEach(child => {
@@ -2653,7 +3457,7 @@ export function initNeonBruiser(): Cleanup {
             }
 
             // 4. Spawning random trees everywhere (at least 55+ trees)
-            for (let i = 0; i < 55; i++) {
+            for (let i = 0; i < 150; i++) {
                 let tx = -170 + Math.random() * 340;
                 let tz = -170 + Math.random() * 340;
 
@@ -2911,9 +3715,9 @@ export function initNeonBruiser(): Cleanup {
             const acaciaTrunkMat = new THREE.MeshStandardMaterial({ color: 0x6e5040, roughness: 0.9 });
             const acaciaLeavesMat = new THREE.MeshStandardMaterial({ color: 0x8a9632, roughness: 0.8 });
             
-            for (let i = 0; i < 20; i++) {
+            for (let i = 0; i < 70; i++) {
                 const angle = Math.random() * Math.PI * 2;
-                const radius = Math.random() * 120;
+                const radius = Math.random() * 150;
                 const tx = -350 + Math.cos(angle) * radius;
                 const tz = 250 + Math.sin(angle) * radius;
                 
@@ -3095,7 +3899,7 @@ export function initNeonBruiser(): Cleanup {
             }
 
             // Spawn pine trees close to spawn point (60, 20)
-            for (let i = 0; i < 8; i++) {
+            for (let i = 0; i < 25; i++) {
                 const angle = Math.random() * Math.PI * 2;
                 const dist = 8 + Math.random() * 15;
                 const tx = 60 + Math.cos(angle) * dist;
@@ -3112,7 +3916,7 @@ export function initNeonBruiser(): Cleanup {
             }
 
             // Spawn pine forest beside it (around x: 100, z: 40)
-            for (let i = 0; i < 35; i++) {
+            for (let i = 0; i < 80; i++) {
                 const tx = 80 + Math.random() * 50;
                 const tz = 0 + Math.random() * 60;
                 // Exclude directly at spawn point
@@ -3144,6 +3948,42 @@ export function initNeonBruiser(): Cleanup {
                 if (iy > WATER_Y) {
                     spawnDroppedFood('planks', new THREE.Vector3(ix, iy, iz));
                 }
+            }
+            
+            // Spawn Reef Corals underwater at (0, -480)
+            spawnReefCorals();
+            
+            // Spawn Rocky Plains resources
+            spawnRockyPlainsResources();
+
+            // 11b. Spawn 50 more pine trees at the main spawn island (Plains: x > 20, d1 < 210)
+            for (let i = 0; i < 50; i++) {
+                const tx = 20 + Math.random() * 150;
+                const tz = -150 + Math.random() * 300;
+                const dist = Math.sqrt(tx * tx + tz * tz);
+                if (dist > 200) { i--; continue; } // Keep on spawn island
+                const ty = getTerrainHeight(tx, tz);
+                if (ty <= WATER_Y) { i--; continue; }
+                
+                // Exclude directly at player spawns
+                const distToHost = Math.sqrt(Math.pow(tx - 60, 2) + Math.pow(tz - 28, 2));
+                const distToClient = Math.sqrt(Math.pow(tx - 60, 2) + Math.pow(tz - 12, 2));
+                if (distToHost < 6 || distToClient < 6) {
+                    i--;
+                    continue;
+                }
+                spawnSinglePineTree(tx, tz);
+            }
+
+            // 11c. Spawn 25 pine trees at the mountain island (center 250, 350, radius 180)
+            for (let i = 0; i < 25; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const radius = Math.random() * 140;
+                const tx = 250 + Math.cos(angle) * radius;
+                const tz = 350 + Math.sin(angle) * radius;
+                const ty = getTerrainHeight(tx, tz);
+                if (ty <= WATER_Y || ty > 50) { i--; continue; } // Don't spawn underwater or on extremely steep peaks
+                spawnSinglePineTree(tx, tz);
             }
         }
 
@@ -3188,17 +4028,37 @@ export function initNeonBruiser(): Cleanup {
             const d_cherry = Math.sqrt(Math.pow(x + 150, 2) + Math.pow(z + 350, 2));
             const d_mountain = Math.sqrt(Math.pow(x - 250, 2) + Math.pow(z - 350, 2));
             const d_village2 = Math.sqrt(Math.pow(x + 350, 2) + Math.pow(z - 250, 2));
+            const d_rocky = Math.sqrt(Math.pow(x - 420, 2) + Math.pow(z - 50, 2));
             
-            if (d_desert < 180) {
+            const d_main = Math.sqrt(x * x + z * z);
+            
+            // Procedural green blend using perlin noise
+            const grassNoise = perlin2d(x * 0.12, z * 0.12) * 0.5 + 0.5;
+            const forestR = 65 / 255;
+            const forestG = 120 / 255;
+            const forestB = 55 / 255;
+            
+            const cherryR = 85 / 255;
+            const cherryG = 135 / 255;
+            const cherryB = 80 / 255;
+
+            let skipOceanBlend = false;
+
+            if (d_main < 210) {
+                r_col = forestR;
+                g_col = forestG;
+                b_col = forestB;
+                skipOceanBlend = true;
+            } else if (d_cherry < 180) {
+                r_col = cherryR;
+                g_col = cherryG;
+                b_col = cherryB;
+                skipOceanBlend = true;
+            } else if (d_desert < 180) {
                 const w = Math.min(1.0, (180 - d_desert) / 30);
                 r_col = r_col * (1 - w) + 0.85 * w;
                 g_col = g_col * (1 - w) + 0.78 * w;
                 b_col = b_col * (1 - w) + 0.50 * w;
-            } else if (d_cherry < 180) {
-                const w = Math.min(1.0, (180 - d_cherry) / 30);
-                r_col = r_col * (1 - w) + 0.28 * w;
-                g_col = g_col * (1 - w) + 0.58 * w;
-                b_col = b_col * (1 - w) + 0.24 * w;
             } else if (d_mountain < 180) {
                 const w = Math.min(1.0, (180 - d_mountain) / 30);
                 let mr = 0.12, mg = 0.24, mb = 0.14;
@@ -3211,36 +4071,45 @@ export function initNeonBruiser(): Cleanup {
                 g_col = g_col * (1 - w) + mg * w;
                 b_col = b_col * (1 - w) + mb * w;
             } else if (d_village2 < 180) {
-                const w = Math.min(1.0, (180 - d_village2) / 30);
-                r_col = r_col * (1 - w) + 0.72 * w;
-                g_col = g_col * (1 - w) + 0.62 * w;
-                b_col = b_col * (1 - w) + 0.35 * w;
+                r_col = forestR;
+                g_col = forestG;
+                b_col = forestB;
+                skipOceanBlend = true;
+            } else if (d_rocky < 120) {
+                const w = Math.min(1.0, (120 - d_rocky) / 30);
+                const rr = 0.45, rg = 0.45, rb = 0.45; // Default dark grey
+                
+                r_col = r_col * (1 - w) + rr * w;
+                g_col = g_col * (1 - w) + rg * w;
+                b_col = b_col * (1 - w) + rb * w;
             } else {
                 // Procedural biomes outside the starter area based on Perlin noise
                 const biomeNoise = perlin2d(x * 0.0015, z * 0.0015);
                 if (biomeNoise > 0.3) {
                     // Savanna blend
-                    r_col = 0.72; g_col = 0.62; b_col = 0.35;
+                    r_col = 0.55; g_col = 0.53; b_col = 0.28;
                 } else if (biomeNoise < -0.3) {
                     // Desert blend
                     r_col = 0.85; g_col = 0.78; b_col = 0.50;
                 }
             }
             
-            // Global mountain stone and snow caps based on height
-            if (y > 45) {
-                // Snow cap
-                r_col = 0.95; g_col = 0.95; b_col = 0.95;
-            } else if (y > 25) {
-                // Stone transition
-                const t = (y - 25) / 20; // 25 to 45
-                r_col = r_col * (1 - t) + 0.45 * t;
-                g_col = g_col * (1 - t) + 0.45 * t;
-                b_col = b_col * (1 - t) + 0.45 * t;
+            // Global mountain stone and snow caps based on height - restricted to Mountain Biome
+            if (d_mountain < 180) {
+                if (y > 45) {
+                    // Snow cap
+                    r_col = 0.95; g_col = 0.95; b_col = 0.95;
+                } else if (y > 25) {
+                    // Stone transition
+                    const t = (y - 25) / 20; // 25 to 45
+                    r_col = r_col * (1 - t) + 0.45 * t;
+                    g_col = g_col * (1 - t) + 0.45 * t;
+                    b_col = b_col * (1 - t) + 0.45 * t;
+                }
             }
 
             // Ocean bed sand blend
-            if (y < -0.5) {
+            if (y < -0.5 && !skipOceanBlend) {
                 const depthFactor = Math.min(1.0, (-0.5 - y) / 5.0);
                 r_col = r_col * (1 - depthFactor) + 0.25 * depthFactor;
                 g_col = g_col * (1 - depthFactor) + 0.22 * depthFactor;
@@ -3487,10 +4356,10 @@ export function initNeonBruiser(): Cleanup {
                 if (qTerrain) qTerrain.visible = true;
                 if (qPool) qPool.visible = true;
             } else {
-                if (staticTerrain) staticTerrain.visible = !playerInCave;
+                if (staticTerrain) staticTerrain.visible = !isDimensionCave(playerInCave);
                 if (staticOcean) {
-                    staticOcean.visible = !playerInCave;
-                    if (!playerInCave) {
+                    staticOcean.visible = !isDimensionCave(playerInCave);
+                    if (!isDimensionCave(playerInCave)) {
                         staticOcean.position.set(playerCX * chunkWidth, -0.5, playerCZ * chunkWidth);
                     }
                 }
@@ -3499,13 +4368,13 @@ export function initNeonBruiser(): Cleanup {
             }
             
             bushes.forEach(b => {
-                b.mesh.visible = !playerInCave;
+                b.mesh.visible = !isDimensionCave(playerInCave);
             });
             
             // 2. Load/Update required chunks
             requiredList.forEach(c => {
                 const chunk = loadedChunks.get(c.key);
-                const needsReload = !chunk || chunk.isCave !== playerInCave;
+                const needsReload = !chunk || isDimensionCave(chunk.isCave) !== isDimensionCave(playerInCave);
                 
                 if (needsReload) {
                     if (chunk) {
@@ -3741,66 +4610,17 @@ export function initNeonBruiser(): Cleanup {
                             }
                         }
                         
-                        if (c.cx === 0 && c.cz === 0) {
-                            if (!caveEntrances.some(ent => ent.x === -50 && ent.z === 70)) {
-                                const entMesh = createCaveEntranceMesh();
-                                entMesh.position.set(-50, getTerrainHeight(-50, 70, false), 70);
-                                scene.add(entMesh);
-                                caveEntrances.push({
-                                    x: -50,
-                                    z: 70,
-                                    mesh: entMesh,
-                                    chunkKey: c.key
-                                });
-                            }
-                            if (!caveEntrances.some(ent => ent.x === 20 && ent.z === 40)) {
-                                const entMesh = createCaveEntranceMesh();
-                                entMesh.position.set(20, getTerrainHeight(20, 40, false), 40);
-                                scene.add(entMesh);
-                                caveEntrances.push({
-                                    x: 20,
-                                    z: 40,
-                                    mesh: entMesh,
-                                    chunkKey: c.key
-                                });
-                            }
-                        } else if (c.cx === -1 && c.cz === 1) {
-                            if (!caveEntrances.some(ent => ent.x === -320 && ent.z === 220)) {
-                                const entMesh = createCaveEntranceMesh();
-                                entMesh.position.set(-320, getTerrainHeight(-320, 220, false), 220);
-                                scene.add(entMesh);
-                                caveEntrances.push({
-                                    x: -320,
-                                    z: 220,
-                                    mesh: entMesh,
-                                    chunkKey: c.key
-                                });
-                            }
-                        } else {
-                            const seedEnt = hashCoords(c.cx + 3, c.cz + 3);
-                            if (seedEnt < 0.10) {
-                                const localX = (hashCoords(c.cx + 1, c.cz) - 0.5) * 300;
-                                const localZ = (hashCoords(c.cx, c.cz + 1) - 0.5) * 300;
-                                const absX = chunkCenterX + localX;
-                                const absZ = chunkCenterZ + localZ;
-                                const ty = getTerrainHeight(absX, absZ, false);
-                                
-                                if (ty > 1.5) {
-                                    const entMesh = createCaveEntranceMesh();
-                                    entMesh.position.set(absX, ty, absZ);
-                                    scene.add(entMesh);
-                                    caveEntrances.push({
-                                        x: absX,
-                                        z: absZ,
-                                        mesh: entMesh,
-                                        chunkKey: c.key
-                                    });
-                                }
-                            }
-                        }
+                        // (Caves removed)
                     }
                     
                     loadedChunks.set(c.key, chunkData);
+                }
+            });
+
+            // Sync visibility of all placed blocks with player's dimension
+            placedObjects.forEach(obj => {
+                if (obj.mesh) {
+                    obj.mesh.visible = (isDimensionCave(obj.inCave) === isDimensionCave(playerInCave));
                 }
             });
         }
@@ -3836,27 +4656,114 @@ export function initNeonBruiser(): Cleanup {
                 side: THREE.DoubleSide
             });
 
-            // Spawn 350 clumps
+            const v1Houses = [
+                { x: -85, z: -85 },
+                { x: -65, z: -80 },
+                { x: -75, z: -60 },
+                { x: -95, z: -70 },
+                { x: -90, z: -98 },
+                { x: -70, z: -100 }
+            ];
+
+            const v2Houses = [
+                { x: -360, z: 240 },
+                { x: -340, z: 260 },
+                { x: -370, z: 270 },
+                { x: -330, z: 230 },
+                { x: -350, z: 285 }
+            ];
+
+            // Spawn 350 clumps (Main Island / general spawn island area)
             for (let i = 0; i < 350; i++) {
                 let x = -185 + Math.random() * 370;
                 let z = -185 + Math.random() * 370;
 
                 const distToHostStart = Math.sqrt(Math.pow(x - 60, 2) + Math.pow(z - 28, 2));
                 const distToClientStart = Math.sqrt(Math.pow(x - 60, 2) + Math.pow(z - 12, 2));
-                const distToVillage = Math.sqrt(Math.pow(x + 80, 2) + Math.pow(z + 80, 2));
                 const distToLake = Math.sqrt(Math.pow(x - LAKE_CENTER_X, 2) + Math.pow(z - LAKE_CENTER_Z, 2));
 
-                if (distToHostStart < 8 || distToClientStart < 8 || distToVillage < 25 || distToLake < CRATER_RADIUS) {
+                if (distToHostStart < 8 || distToClientStart < 8 || distToLake < CRATER_RADIUS) {
                     continue;
                 }
 
+                // Check if too close to any house on main island village
+                let tooCloseToHouse = false;
+                for (const house of v1Houses) {
+                    const distToHouse = Math.sqrt(Math.pow(x - house.x, 2) + Math.pow(z - house.z, 2));
+                    if (distToHouse < 4.5) {
+                        tooCloseToHouse = true;
+                        break;
+                    }
+                }
+                if (tooCloseToHouse) continue;
+
                 const y = getTerrainHeight(x, z);
-                const mesh = new THREE.Mesh(grassGeom, grassMat);
-                mesh.position.set(x, y, z);
-                mesh.rotation.y = Math.random() * Math.PI;
-                const s = 0.7 + Math.random() * 0.6;
-                mesh.scale.set(s, s, s);
-                scene.add(mesh);
+                if (y > -0.5) {
+                    const mesh = new THREE.Mesh(grassGeom, grassMat);
+                    mesh.position.set(x, y, z);
+                    mesh.rotation.y = Math.random() * Math.PI;
+                    const s = 0.7 + Math.random() * 0.6;
+                    mesh.scale.set(s, s, s);
+                    scene.add(mesh);
+                }
+            }
+
+            // Spawn 150 extra grass clumps in the main island village area (centered around x: -80, z: -80)
+            for (let i = 0; i < 150; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const radius = Math.random() * 90;
+                const x = -80 + Math.cos(angle) * radius;
+                const z = -80 + Math.sin(angle) * radius;
+
+                // Check if too close to any house on main island village
+                let tooCloseToHouse = false;
+                for (const house of v1Houses) {
+                    const distToHouse = Math.sqrt(Math.pow(x - house.x, 2) + Math.pow(z - house.z, 2));
+                    if (distToHouse < 4.5) {
+                        tooCloseToHouse = true;
+                        break;
+                    }
+                }
+                if (tooCloseToHouse) continue;
+
+                const y = getTerrainHeight(x, z);
+                if (y > -0.5) {
+                    const mesh = new THREE.Mesh(grassGeom, grassMat);
+                    mesh.position.set(x, y, z);
+                    mesh.rotation.y = Math.random() * Math.PI;
+                    const s = 0.7 + Math.random() * 0.6;
+                    mesh.scale.set(s, s, s);
+                    scene.add(mesh);
+                }
+            }
+
+            // Spawn 150 extra grass clumps in the second village island (centered around x: -350, z: 250)
+            for (let i = 0; i < 150; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const radius = Math.random() * 150;
+                const x = -350 + Math.cos(angle) * radius;
+                const z = 250 + Math.sin(angle) * radius;
+
+                // Check if too close to any house on second village
+                let tooCloseToHouse = false;
+                for (const house of v2Houses) {
+                    const distToHouse = Math.sqrt(Math.pow(x - house.x, 2) + Math.pow(z - house.z, 2));
+                    if (distToHouse < 4.5) {
+                        tooCloseToHouse = true;
+                        break;
+                    }
+                }
+                if (tooCloseToHouse) continue;
+
+                const y = getTerrainHeight(x, z);
+                if (y > -0.5) {
+                    const mesh = new THREE.Mesh(grassGeom, grassMat);
+                    mesh.position.set(x, y, z);
+                    mesh.rotation.y = Math.random() * Math.PI;
+                    const s = 0.7 + Math.random() * 0.6;
+                    mesh.scale.set(s, s, s);
+                    scene.add(mesh);
+                }
             }
 
             // Spawn 100 extra grass clumps in the cherry biome
@@ -3962,6 +4869,23 @@ export function initNeonBruiser(): Cleanup {
             woodenPickaxeGroup.add(pickHead);
 
             rightHand.add(woodenPickaxeGroup);
+
+            // First Person WOODEN SHOVEL Mesh Group
+            woodenShovelGroup = new THREE.Group();
+            woodenShovelGroup.position.set(0, 0, -0.15);
+            woodenShovelGroup.rotation.set(0.4, 0, -0.3);
+            woodenShovelGroup.visible = false;
+
+            const shovelHandle = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.45, 8), handleMat);
+            shovelHandle.rotation.x = Math.PI / 2;
+            woodenShovelGroup.add(shovelHandle);
+
+            const shovelHead = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.12, 0.02), axeHeadMat);
+            shovelHead.position.set(0, 0, -0.25);
+            shovelHead.rotation.x = Math.PI / 2;
+            woodenShovelGroup.add(shovelHead);
+
+            rightHand.add(woodenShovelGroup);
             firstPersonHands.add(rightHand);
 
             // Left Fist
@@ -4036,11 +4960,11 @@ export function initNeonBruiser(): Cleanup {
             }
             
             // Depending on the food type, create cool pixel-art/voxel style meshes
-            if (foodType === 'porkchop') {
-                // Pinkish raw/cooked porkchop
-                const meatMat = new THREE.MeshStandardMaterial({ color: 0xff9ebb, roughness: 0.8 });
-                const skinMat = new THREE.MeshStandardMaterial({ color: 0xff6a6a, roughness: 0.8 });
-                const boneMat = new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.8 });
+            if (foodType === 'porkchop' || foodType === 'cooked_porkchop') {
+                const isCooked = foodType === 'cooked_porkchop';
+                const meatMat = new THREE.MeshStandardMaterial({ color: isCooked ? 0xb5651d : 0xff9ebb, roughness: 0.8 });
+                const skinMat = new THREE.MeshStandardMaterial({ color: isCooked ? 0x8b4513 : 0xff6a6a, roughness: 0.8 });
+                const boneMat = new THREE.MeshStandardMaterial({ color: isCooked ? 0xd2b48c : 0xeeeeee, roughness: 0.8 });
                 
                 const meat = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.08, 0.04), meatMat);
                 meat.position.set(0, 0, 0);
@@ -4054,10 +4978,10 @@ export function initNeonBruiser(): Cleanup {
                 bone.position.set(0, 0.05, 0);
                 bone.rotation.z = 0.2;
                 foodGroup.add(bone);
-            } else if (foodType === 'beef') {
-                // Brownish-red steak
-                const steakMat = new THREE.MeshStandardMaterial({ color: 0x8b2500, roughness: 0.9 });
-                const fatMat = new THREE.MeshStandardMaterial({ color: 0xfffff0, roughness: 0.9 });
+            } else if (foodType === 'beef' || foodType === 'cooked_beef') {
+                const isCooked = foodType === 'cooked_beef';
+                const steakMat = new THREE.MeshStandardMaterial({ color: isCooked ? 0x5c4033 : 0x8b2500, roughness: 0.9 });
+                const fatMat = new THREE.MeshStandardMaterial({ color: isCooked ? 0xcd853f : 0xfffff0, roughness: 0.9 });
                 
                 const steak = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.09, 0.04), steakMat);
                 steak.position.set(0, 0, 0);
@@ -4066,10 +4990,10 @@ export function initNeonBruiser(): Cleanup {
                 const fat1 = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.095, 0.045), fatMat);
                 fat1.position.set(0.03, 0, 0);
                 foodGroup.add(fat1);
-            } else if (foodType === 'mutton') {
-                // Red meat
-                const meatMat = new THREE.MeshStandardMaterial({ color: 0xd04040, roughness: 0.8 });
-                const fatMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 });
+            } else if (foodType === 'mutton' || foodType === 'cooked_mutton') {
+                const isCooked = foodType === 'cooked_mutton';
+                const meatMat = new THREE.MeshStandardMaterial({ color: isCooked ? 0x8b5a2b : 0xd04040, roughness: 0.8 });
+                const fatMat = new THREE.MeshStandardMaterial({ color: isCooked ? 0xd2b48c : 0xffffff, roughness: 0.8 });
                 
                 const meat = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.07, 0.04), meatMat);
                 meat.position.set(0, 0, 0);
@@ -4078,10 +5002,10 @@ export function initNeonBruiser(): Cleanup {
                 const fat = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.015, 0.045), fatMat);
                 fat.position.set(0, 0.03, 0);
                 foodGroup.add(fat);
-            } else if (foodType === 'chicken') {
-                // Chicken drumstick
-                const meatMat = new THREE.MeshStandardMaterial({ color: 0xcd853f, roughness: 0.8 });
-                const boneMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 });
+            } else if (foodType === 'chicken' || foodType === 'cooked_chicken') {
+                const isCooked = foodType === 'cooked_chicken';
+                const meatMat = new THREE.MeshStandardMaterial({ color: isCooked ? 0x8b5a2b : 0xcd853f, roughness: 0.8 });
+                const boneMat = new THREE.MeshStandardMaterial({ color: isCooked ? 0xd2b48c : 0xffffff, roughness: 0.8 });
                 
                 const meatPart = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 8), meatMat);
                 meatPart.scale.set(1, 1.4, 1);
@@ -4091,10 +5015,10 @@ export function initNeonBruiser(): Cleanup {
                 const bone = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.06, 6), boneMat);
                 bone.position.set(0, -0.03, 0);
                 foodGroup.add(bone);
-            } else if (foodType === 'raw_fish') {
-                // Silver-blue fish
-                const bodyMat = new THREE.MeshStandardMaterial({ color: 0x4682b4, roughness: 0.5 });
-                const bellyMat = new THREE.MeshStandardMaterial({ color: 0xe0ffff, roughness: 0.5 });
+            } else if (foodType === 'raw_fish' || foodType === 'cooked_fish') {
+                const isCooked = foodType === 'cooked_fish';
+                const bodyMat = new THREE.MeshStandardMaterial({ color: isCooked ? 0xe97451 : 0x4682b4, roughness: 0.5 });
+                const bellyMat = new THREE.MeshStandardMaterial({ color: isCooked ? 0xffebcd : 0xe0ffff, roughness: 0.5 });
                 const eyeMat = new THREE.MeshStandardMaterial({ color: 0x000000 });
                 
                 const body = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.1, 0.035), bodyMat);
@@ -4353,6 +5277,10 @@ export function initNeonBruiser(): Cleanup {
 
         // Input Keyboard Listeners
         function onKeyDown(event) {
+            // Ignore game keys if typing in an input/textarea field
+            if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) {
+                return;
+            }
             AudioSynth.init();
             
             // Chat Screen Toggle
@@ -4369,6 +5297,13 @@ export function initNeonBruiser(): Cleanup {
                 return;
             }
 
+            if (chestUIOpen) {
+                if (event.code === 'KeyE') {
+                    closeChestUI();
+                }
+                return;
+            }
+
             if (furnaceUIOpen) {
                 if (event.code === 'KeyE') {
                     closeFurnaceUI();
@@ -4378,6 +5313,7 @@ export function initNeonBruiser(): Cleanup {
 
             if (inventoryOpen) {
                 if (event.code === 'KeyE') {
+                    event.preventDefault();
                     toggleInventoryOverlay();
                 }
                 return;
@@ -4394,7 +5330,7 @@ export function initNeonBruiser(): Cleanup {
                 if (!gameActive || myHealth <= 0 || mapOpen || inventoryOpen || chatOpen) return;
                 
                 const currentItem = hotbarItems[selectedHotbarIndex];
-                if (currentItem && ['porkchop', 'beef', 'mutton', 'chicken', 'raw_fish'].includes(currentItem)) {
+                if (currentItem && ['porkchop', 'beef', 'mutton', 'chicken', 'raw_fish', 'cooked_porkchop', 'cooked_beef', 'cooked_mutton', 'cooked_chicken', 'cooked_fish'].includes(currentItem)) {
                     if (hunger >= 100) {
                         addChatMessage("Your hunger bar is already full!", "system");
                         return;
@@ -4458,6 +5394,7 @@ export function initNeonBruiser(): Cleanup {
                     handleKeyPressF();
                     break;
                 case 'KeyE':
+                    event.preventDefault();
                     if (handleKeyEInteraction()) {
                         break;
                     }
@@ -4473,6 +5410,7 @@ export function initNeonBruiser(): Cleanup {
             if (!gameActive || myHealth <= 0 || mapOpen || chatOpen || inventoryOpen) return;
             const dropItemType = hotbarItems[selectedHotbarIndex];
             if (dropItemType) {
+                const dur = hotbarDurability[selectedHotbarIndex];
                 hotbarCounts[selectedHotbarIndex]--;
                 
                 const lookDir = new THREE.Vector3();
@@ -4490,11 +5428,12 @@ export function initNeonBruiser(): Cleanup {
                     dropPos.y = groundY + 0.3;
                 }
                 
-                spawnDroppedFood(dropItemType, dropPos);
+                spawnDroppedFood(dropItemType, dropPos, 1.0, dur);
                 
                 if (hotbarCounts[selectedHotbarIndex] <= 0) {
                     hotbarItems[selectedHotbarIndex] = null;
                     hotbarCounts[selectedHotbarIndex] = 0;
+                    hotbarDurability[selectedHotbarIndex] = null;
                     selectHotbarSlot(selectedHotbarIndex);
                 } else {
                     updateHotbarUI();
@@ -4505,6 +5444,45 @@ export function initNeonBruiser(): Cleanup {
         }
 
         function onKeyUp(event) {
+            // Ignore game keys if typing in an input/textarea field
+            if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) {
+                return;
+            }
+            if (event.key === 'Escape' || event.code === 'Escape') {
+                if (ignoreNextEscKeyUp) {
+                    ignoreNextEscKeyUp = false;
+                    return;
+                }
+                if (justExitedPointerLock) {
+                    return;
+                }
+                const pauseMenu = document.getElementById('pause-menu');
+                const prompt = document.getElementById('click-lock-prompt');
+                const ingameSettings = document.getElementById('in-game-settings-screen');
+                
+                if (gameActive && myHealth > 0 && oppHealth > 0) {
+                    // 1. If in-game settings are open, go back to pause menu
+                    if (ingameSettings && ingameSettings.style.display === 'flex') {
+                        ingameSettings.style.display = 'none';
+                        if (pauseMenu) pauseMenu.style.display = 'flex';
+                        return;
+                    }
+                    
+                    // 2. If pause menu is open, resume the game
+                    if (pauseMenu && pauseMenu.style.display === 'flex') {
+                        requestPointerLock();
+                        pauseMenu.style.display = 'none';
+                        return;
+                    }
+                    
+                    // 3. Otherwise, if pointer is not locked and no overlays are open, go to pause menu
+                    if (!document.pointerLockElement && !chatOpen && !mapOpen && !inventoryOpen && !furnaceUIOpen && !chestUIOpen) {
+                        if (pauseMenu) pauseMenu.style.display = 'flex';
+                        if (prompt) prompt.style.display = 'none';
+                        return;
+                    }
+                }
+            }
             if (chatOpen) return;
             switch (event.code) {
                 case 'KeyW':
@@ -4554,7 +5532,7 @@ export function initNeonBruiser(): Cleanup {
                     
                     const aimedObj = getPlacedObjectAimTarget();
                     if (aimedObj && aimedObj.type === 'door') {
-                        if (item && ['wooden_axe', 'wooden_sword', 'wooden_pickaxe', 'stone_axe', 'stone_sword', 'stone_pickaxe'].includes(item)) {
+                        if (item && ['wooden_axe', 'wooden_sword', 'wooden_pickaxe', 'stone_axe', 'stone_sword', 'stone_pickaxe', 'wooden_shovel', 'stone_shovel', 'iron_shovel', 'copper_axe', 'copper_sword', 'copper_pickaxe', 'copper_shovel'].includes(item)) {
                             aimedObj.hits = (aimedObj.hits || 0) + 1;
                             AudioSynth.playHit(aimedObj.pos);
                             updatePlacedObjectCracks(aimedObj);
@@ -4572,15 +5550,83 @@ export function initNeonBruiser(): Cleanup {
                     isMouseDown = true;
                     mouseDownStartTime = Date.now();
                     choppingTreeTarget = getTreeAimTarget();
-
+ 
                     if (inTurret) {
                         triggerTurretShoot();
                     } else if (item === 'bow') {
                         triggerBowShoot();
-                    } else if (item && ['log', 'planks', 'crafting_bench', 'stone', 'smooth_stone', 'stone_cutter', 'boat', 'stone_stairs', 'stone_slab', 'wooden_stairs', 'door', 'ladder'].includes(item)) {
+                    } else if (item === 'flint_and_steel') {
+                        const now = Date.now();
+                        if (now - lastWeaponSwingTime >= 400) {
+                            triggerWeaponSwing(item);
+                            lastWeaponSwingTime = now;
+                            
+                            const aimedObj = getPlacedObjectAimTarget();
+                            const aimedTree = getTreeAimTarget();
+                            
+                            if (aimedObj && aimedObj.type === 'tnt') {
+                                igniteTnt(aimedObj);
+                                useToolInHand();
+                            } else if (aimedObj && aimedObj.type === 'unlit_campfire') {
+                                aimedObj.type = 'campfire';
+                                aimedObj.burnTimeLeft = 60.0;
+                                addCampfireFireMesh(aimedObj);
+                                AudioSynth.playHit(aimedObj.pos);
+                                if (isConnected) {
+                                    sendNetworkMessage({
+                                        type: 'light-campfire',
+                                        x: aimedObj.pos.x,
+                                        y: aimedObj.pos.y,
+                                        z: aimedObj.pos.z
+                                    });
+                                }
+                                saveWorld(false);
+                                useToolInHand();
+                            } else if (aimedObj && aimedObj.type === 'campfire') {
+                                aimedObj.burnTimeLeft = 60.0;
+                                AudioSynth.playHit(aimedObj.pos);
+                                if (isConnected) {
+                                    sendNetworkMessage({
+                                        type: 'light-campfire',
+                                        x: aimedObj.pos.x,
+                                        y: aimedObj.pos.y,
+                                        z: aimedObj.pos.z
+                                    });
+                                }
+                                useToolInHand();
+                            } else if (aimedTree && !aimedTree.isBurning && !aimedTree.isChopped && !aimedTree.isBurned) {
+                                startTreeBurning(aimedTree);
+                                useToolInHand();
+                            } else {
+                                const placePos = getGroundIntersectPoint(6.0);
+                                if (placePos) {
+                                    const fireBelow = placedObjects.some(obj => 
+                                        obj.type === 'fire' &&
+                                        Math.abs(obj.pos.x - placePos.x) < 0.1 &&
+                                        Math.abs(obj.pos.z - placePos.z) < 0.1 &&
+                                        Math.abs((obj.pos.y + 0.9) - placePos.y) < 0.1
+                                    );
+                                    const fireAt = placedObjects.some(obj => 
+                                        obj.type === 'fire' &&
+                                        Math.abs(obj.pos.x - placePos.x) < 0.1 &&
+                                        Math.abs(obj.pos.z - placePos.z) < 0.1 &&
+                                        Math.abs(obj.pos.y - placePos.y) < 0.1
+                                    );
+                                    if (!fireBelow && !fireAt) {
+                                        spawnPlacedObject('fire', placePos, true);
+                                        AudioSynth.playHit(placePos);
+                                        saveWorld(false);
+                                        useToolInHand();
+                                    }
+                                }
+                            }
+                        }
+                        return;
+                    } else if (item && ['log', 'planks', 'crafting_bench', 'stone', 'smooth_stone', 'stone_cutter', 'boat', 'stone_stairs', 'stone_slab', 'wooden_stairs', 'door', 'ladder', 'wool', 'bed', 'furnace', 'chest', 'sand', 'tnt', 'unlit_campfire'].includes(item)) {
                         const placed = tryPlaceBlock();
                         if (placed) return;
-                    } else if (item && ['wooden_axe', 'wooden_sword', 'wooden_pickaxe'].includes(item)) {
+                        triggerWeaponSwing(item);
+                    } else if (item && ['wooden_axe', 'wooden_sword', 'wooden_pickaxe', 'stone_sword', 'stone_pickaxe', 'stone_axe', 'iron_sword', 'iron_pickaxe', 'iron_axe', 'wooden_shovel', 'stone_shovel', 'iron_shovel', 'copper_sword', 'copper_pickaxe', 'copper_axe', 'copper_shovel'].includes(item)) {
                         const now = Date.now();
                         if (now - lastWeaponSwingTime >= 400) {
                             triggerWeaponSwing(item);
@@ -4588,10 +5634,11 @@ export function initNeonBruiser(): Cleanup {
                             if (aimedObj) {
                                 aimedObj.hits = (aimedObj.hits || 0) + 1;
                                 AudioSynth.playHit(aimedObj.pos);
+                                updatePlacedObjectCracks(aimedObj);
                                 if (aimedObj.hits >= 3) {
                                     minePlacedObject(aimedObj);
                                 }
-                            } else if (item === 'wooden_axe') {
+                            } else if (item.endsWith('_axe')) {
                                 const aimedTree = getTreeAimTarget();
                                 if (aimedTree) {
                                     if (aimedTree.isChopped) {
@@ -4607,18 +5654,10 @@ export function initNeonBruiser(): Cleanup {
                                 }
                             }
                         }
-                    } else if (!item) {
-                        triggerPunch();
-                        const aimedObj = getPlacedObjectAimTarget();
-                        if (aimedObj) {
-                            aimedObj.hits = (aimedObj.hits || 0) + 1;
-                            AudioSynth.playHit(aimedObj.pos);
-                            if (aimedObj.hits >= 3) {
-                                minePlacedObject(aimedObj);
-                            }
-                        }
                     } else if (item && ['porkchop', 'beef', 'mutton', 'chicken'].includes(item)) {
                         triggerEatFood();
+                    } else {
+                        triggerWeaponSwing(item || 'fists');
                     }
                 } else if (e.button === 2) { // Right click
                     e.preventDefault();
@@ -4692,16 +5731,29 @@ export function initNeonBruiser(): Cleanup {
             if (text.length > 0) {
                 const parts = text.split(/\s+/);
                 const command = parts[0].toLowerCase();
-                if (command === '/night' || command === '/tp') {
+                if (command === '/night' || command === '/day' || command === '/tp' || command === '/weather') {
                     if (!cheatsEnabled) {
-                        addChatMessage("Cheats are disabled in this world!", "system");
-                        elChatInput.value = '';
-                        toggleChat();
-                        return;
+                         addChatMessage("Cheats are disabled in this world!", "system");
+                         elChatInput.value = '';
+                         toggleChat();
+                         return;
                     }
                 }
                 if (command === '/night') {
                     triggerNightCommand();
+                } else if (command === '/day') {
+                    triggerDayCommand();
+                } else if (command === '/weather') {
+                    const wType = parts[1] ? parts[1].toLowerCase() : '';
+                    if (['clear', 'rain', 'thunder'].includes(wType)) {
+                        setWeather(wType);
+                        if (isHost && isConnected) {
+                            sendNetworkMessage({ type: 'weather-sync', weather: currentWeather });
+                        }
+                        addChatMessage("Weather set to " + wType + ".", "system");
+                    } else {
+                        addChatMessage("Usage: /weather [clear|rain|thunder]", "system");
+                    }
                 } else if (command === '/tp') {
                     const loc = parts[1] ? parts[1].toLowerCase() : '';
                     const targetCoords = {
@@ -4717,7 +5769,9 @@ export function initNeonBruiser(): Cleanup {
                         secondvillage: { x: -350, z: 250 },
                         savanna: { x: -350, z: 250 },
                         savannavillage: { x: -350, z: 250 },
-                        quantum: { x: 2000, z: 0 }
+                        quantum: { x: 2000, z: 0 },
+                        rocky: { x: 420, z: 50 },
+                        reef: { x: 0, z: -480 }
                     };
                     const coords = targetCoords[loc];
                     if (coords) {
@@ -4760,7 +5814,7 @@ export function initNeonBruiser(): Cleanup {
                         
                         addChatMessage("Teleported to " + loc + " (" + tx + ", " + tz + ").", "system");
                     } else {
-                        addChatMessage("Usage: /tp [dunes|forest|cherry|mountain|savanna|quantum]", "system");
+                        addChatMessage("Usage: /tp [dunes|forest|cherry|mountain|savanna|quantum|rocky|reef]", "system");
                     }
                 } else {
                     addChatMessage(text, 'local');
@@ -4782,6 +5836,18 @@ export function initNeonBruiser(): Cleanup {
             addChatMessage("Time set to night via command.", "system");
         }
 
+        function triggerDayCommand() {
+            const totalCycleMs = CYCLE_DURATION * 1000;
+            const currentMs = Date.now() % totalCycleMs;
+            const targetMs = 30000; // 30s start of daytime
+            
+            const diff = (targetMs - currentMs + totalCycleMs) % totalCycleMs;
+            timeOffset += diff;
+            
+            sendNetworkMessage({ type: 'time-sync', offset: timeOffset });
+            addChatMessage("Time set to day via command.", "system");
+        }
+
         // Make addChatMessage globally available for network events
         function addChatMessage(text, type) {
             const elChatLog = document.getElementById('chat-log');
@@ -4792,8 +5858,8 @@ export function initNeonBruiser(): Cleanup {
             
             let prefix = "";
             if (type === 'system') prefix = "[System] ";
-            else if (type === 'local') prefix = "[You] ";
-            else if (type === 'opponent') prefix = "[Opponent] ";
+            else if (type === 'local') prefix = `[${myAppearance.name || 'You'}] `;
+            else if (type === 'opponent') prefix = `[${opponentAppearance.name || 'Opponent'}] `;
             
             msgEl.innerText = prefix + text;
             elChatLog.appendChild(msgEl);
@@ -4807,6 +5873,35 @@ export function initNeonBruiser(): Cleanup {
                     }
                 }, 2000);
             }, 6000);
+        }
+
+        function updateFPToolMaterial(mesh, itemType) {
+            if (!mesh || !itemType) return;
+            
+            let color = 0x5c4033; // wood (default)
+            let metalness = 0.1;
+            let roughness = 0.9;
+            
+            if (itemType.startsWith('stone_')) {
+                color = 0x888888;
+                metalness = 0.1;
+                roughness = 0.8;
+            } else if (itemType.startsWith('copper_')) {
+                color = 0xe88d72;
+                metalness = 0.8;
+                roughness = 0.2;
+            } else if (itemType.startsWith('iron_')) {
+                color = 0xa34f40;
+                metalness = 0.8;
+                roughness = 0.2;
+            }
+            
+            if (mesh.material) {
+                mesh.material.color.setHex(color);
+                mesh.material.metalness = metalness;
+                mesh.material.roughness = roughness;
+                mesh.material.needsUpdate = true;
+            }
         }
 
         function updateWeaponUI() {
@@ -4825,27 +5920,59 @@ export function initNeonBruiser(): Cleanup {
                 if (woodenAxeGroup) woodenAxeGroup.visible = false;
                 if (woodenSwordGroup) woodenSwordGroup.visible = false;
                 if (woodenPickaxeGroup) woodenPickaxeGroup.visible = false;
+                if (woodenShovelGroup) woodenShovelGroup.visible = false;
                 rightHand.visible = false;
                 leftHand.visible = false;
             } else if (activeWeapon === 'wooden_axe') {
                 if (bowGroup) bowGroup.visible = false;
-                if (woodenAxeGroup) woodenAxeGroup.visible = true;
+                if (woodenAxeGroup) {
+                    woodenAxeGroup.visible = true;
+                    if (woodenAxeGroup.children[1]) {
+                        updateFPToolMaterial(woodenAxeGroup.children[1], currentItem);
+                    }
+                }
                 if (woodenSwordGroup) woodenSwordGroup.visible = false;
                 if (woodenPickaxeGroup) woodenPickaxeGroup.visible = false;
+                if (woodenShovelGroup) woodenShovelGroup.visible = false;
                 rightHand.visible = true;
                 leftHand.visible = true;
             } else if (activeWeapon === 'wooden_sword') {
                 if (bowGroup) bowGroup.visible = false;
                 if (woodenAxeGroup) woodenAxeGroup.visible = false;
-                if (woodenSwordGroup) woodenSwordGroup.visible = true;
+                if (woodenSwordGroup) {
+                    woodenSwordGroup.visible = true;
+                    if (woodenSwordGroup.children[2]) {
+                        updateFPToolMaterial(woodenSwordGroup.children[2], currentItem);
+                    }
+                }
                 if (woodenPickaxeGroup) woodenPickaxeGroup.visible = false;
+                if (woodenShovelGroup) woodenShovelGroup.visible = false;
                 rightHand.visible = true;
                 leftHand.visible = true;
             } else if (activeWeapon === 'wooden_pickaxe') {
                 if (bowGroup) bowGroup.visible = false;
                 if (woodenAxeGroup) woodenAxeGroup.visible = false;
                 if (woodenSwordGroup) woodenSwordGroup.visible = false;
-                if (woodenPickaxeGroup) woodenPickaxeGroup.visible = true;
+                if (woodenPickaxeGroup) {
+                    woodenPickaxeGroup.visible = true;
+                    if (woodenPickaxeGroup.children[1]) {
+                        updateFPToolMaterial(woodenPickaxeGroup.children[1], currentItem);
+                    }
+                }
+                if (woodenShovelGroup) woodenShovelGroup.visible = false;
+                rightHand.visible = true;
+                leftHand.visible = true;
+            } else if (activeWeapon === 'wooden_shovel') {
+                if (bowGroup) bowGroup.visible = false;
+                if (woodenAxeGroup) woodenAxeGroup.visible = false;
+                if (woodenSwordGroup) woodenSwordGroup.visible = false;
+                if (woodenPickaxeGroup) woodenPickaxeGroup.visible = false;
+                if (woodenShovelGroup) {
+                    woodenShovelGroup.visible = true;
+                    if (woodenShovelGroup.children[1]) {
+                        updateFPToolMaterial(woodenShovelGroup.children[1], currentItem);
+                    }
+                }
                 rightHand.visible = true;
                 leftHand.visible = true;
             } else {
@@ -4853,8 +5980,18 @@ export function initNeonBruiser(): Cleanup {
                 if (woodenAxeGroup) woodenAxeGroup.visible = false;
                 if (woodenSwordGroup) woodenSwordGroup.visible = false;
                 if (woodenPickaxeGroup) woodenPickaxeGroup.visible = false;
+                if (woodenShovelGroup) woodenShovelGroup.visible = false;
                 rightHand.visible = true;
                 leftHand.visible = true;
+            }
+
+            // Update held food visual and visibility
+            const isFood = currentItem && ['porkchop', 'beef', 'mutton', 'chicken', 'raw_fish', 'cooked_porkchop', 'cooked_beef', 'cooked_mutton', 'cooked_chicken', 'cooked_fish'].includes(currentItem);
+            if (isFood) {
+                updateHeldFoodVisual(currentItem);
+                if (foodGroup) foodGroup.visible = true;
+            } else {
+                if (foodGroup) foodGroup.visible = false;
             }
         }
 
@@ -4891,13 +6028,171 @@ export function initNeonBruiser(): Cleanup {
                 dmg = 9;
                 range = 4.0;
                 knockback = 11.0;
+            } else if (weaponType === 'stone_sword') {
+                dmg = 15;
+                range = 4.5;
+                knockback = 15.0;
+            } else if (weaponType === 'stone_axe') {
+                dmg = 13;
+                range = 4.3;
+                knockback = 13.0;
+            } else if (weaponType === 'stone_pickaxe') {
+                dmg = 11;
+                range = 4.1;
+                knockback = 11.0;
+            } else if (weaponType === 'iron_sword') {
+                dmg = 20;
+                range = 4.6;
+                knockback = 16.0;
+            } else if (weaponType === 'iron_axe') {
+                dmg = 16;
+                range = 4.4;
+                knockback = 14.0;
+            } else if (weaponType === 'iron_pickaxe') {
+                dmg = 14;
+                range = 4.2;
+                knockback = 12.0;
+            } else if (weaponType === 'wooden_shovel') {
+                dmg = 8;
+                range = 4.0;
+                knockback = 10.0;
+            } else if (weaponType === 'stone_shovel') {
+                dmg = 10;
+                range = 4.1;
+                knockback = 11.0;
+            } else if (weaponType === 'copper_shovel') {
+                dmg = 10;
+                range = 4.1;
+                knockback = 11.0;
+            } else if (weaponType === 'iron_shovel') {
+                dmg = 12;
+                range = 4.2;
+                knockback = 12.0;
+            } else if (weaponType === 'copper_sword') {
+                dmg = 15;
+                range = 4.5;
+                knockback = 15.0;
+            } else if (weaponType === 'copper_axe') {
+                dmg = 13;
+                range = 4.3;
+                knockback = 13.0;
+            } else if (weaponType === 'copper_pickaxe') {
+                dmg = 11;
+                range = 4.1;
+                knockback = 11.0;
             }
 
             checkHit(range, dmg, knockback);
+            useToolInHand();
+        }
+
+        function startTreeBurning(tree) {
+            if (tree.isBurning || tree.isBurned) return;
+            tree.isBurning = true;
+            tree.burnProgress = 0.0;
+            
+            // Clone trunk material so we only color this trunk
+            if (tree.trunk && tree.trunk.material) {
+                tree.trunk.material = tree.trunk.material.clone();
+                tree.trunk.userData.originalColor = tree.trunk.material.color.getHex();
+            }
+            
+            // Clone leaves materials
+            if (tree.leaves) {
+                tree.leaves.forEach(leaf => {
+                    if (leaf.material) {
+                        leaf.material = leaf.material.clone();
+                        leaf.material.transparent = true;
+                    }
+                });
+            }
+            
+            // Create animated flame group
+            const fireGroup = new THREE.Group();
+            fireGroup.name = 'treeFlames';
+            
+            const cubes = [];
+            for (let i = 0; i < 10; i++) {
+                const size = 0.12 + Math.random() * 0.22;
+                const mat = new THREE.MeshBasicMaterial({
+                    color: Math.random() > 0.6 ? 0xffea00 : (Math.random() > 0.3 ? 0xff5500 : 0xffffff),
+                    toneMapped: false
+                });
+                const cube = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), mat);
+                cube.position.set(
+                    (Math.random() - 0.5) * 0.5,
+                    Math.random() * 3.5,
+                    (Math.random() - 0.5) * 0.5
+                );
+                fireGroup.add(cube);
+                cubes.push({
+                    mesh: cube,
+                    initialY: cube.position.y,
+                    speed: 0.6 + Math.random() * 0.8,
+                    offsetX: (Math.random() - 0.5) * 0.4,
+                    offsetZ: (Math.random() - 0.5) * 0.4
+                });
+            }
+            fireGroup.userData = { cubes: cubes };
+            tree.group.add(fireGroup);
+            
+            // Add a warm point light to the tree
+            const light = new THREE.PointLight(0xff5500, 1.2, 15.0);
+            light.name = 'treeLight';
+            light.position.y = 1.75;
+            tree.group.add(light);
+            
+            AudioSynth.playHit(tree.group.position);
+            
+            if (isConnected) {
+                sendNetworkMessage({
+                    type: 'tree-burn-start',
+                    x: tree.x,
+                    z: tree.z
+                });
+            }
+        }
+
+        function addCampfireFireMesh(obj) {
+            // Remove existing flames if any
+            const existingFlames = obj.mesh.getObjectByName('campfireFlames');
+            if (existingFlames) obj.mesh.remove(existingFlames);
+            const existingLight = obj.mesh.getObjectByName('campfireLight');
+            if (existingLight) obj.mesh.remove(existingLight);
+
+            const fireGroup = new THREE.Group();
+            fireGroup.name = 'campfireFlames';
+            
+            const cubes = [];
+            for (let i = 0; i < 7; i++) {
+                const size = 0.1 + Math.random() * 0.15;
+                const mat = new THREE.MeshBasicMaterial({
+                    color: Math.random() > 0.6 ? 0xffea00 : (Math.random() > 0.3 ? 0xff5500 : 0xffffff),
+                    toneMapped: false
+                });
+                const cube = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), mat);
+                cube.position.set((Math.random() - 0.5) * 0.25, 0.15 + Math.random() * 0.4, (Math.random() - 0.5) * 0.25);
+                fireGroup.add(cube);
+                cubes.push({
+                    mesh: cube,
+                    initialY: cube.position.y,
+                    speed: 0.4 + Math.random() * 0.6,
+                    offsetX: (Math.random() - 0.5) * 0.2,
+                    offsetZ: (Math.random() - 0.5) * 0.2
+                });
+            }
+            fireGroup.userData = { cubes: cubes };
+            obj.mesh.add(fireGroup);
+            
+            const light = new THREE.PointLight(0xff7700, 1.2, 12.0);
+            light.name = 'campfireLight';
+            light.position.y = 0.4;
+            obj.mesh.add(light);
         }
 
         function updateWorldTrees(delta) {
             const now = Date.now();
+            const elapsedSeconds = now * 0.001;
             worldTrees.forEach(tree => {
                 // 1. Shaking animation
                 if (tree.lastHitTime && now - tree.lastHitTime < 300) {
@@ -4920,8 +6215,75 @@ export function initNeonBruiser(): Cleanup {
                     tree.group.rotation.x = (Math.PI / 2) * tree.fellProgress;
                 }
                 
+                // 2b. Burning animation
+                if (tree.isBurning) {
+                    if (tree.burnProgress === undefined) tree.burnProgress = 0;
+                    tree.burnProgress += delta * 0.08; // takes 12.5 seconds to burn down
+                    
+                    // Fade/shrink leaves
+                    if (tree.leaves) {
+                        const scale = Math.max(0, 1.0 - tree.burnProgress);
+                        tree.leaves.forEach(leaf => {
+                            leaf.scale.set(scale, scale, scale);
+                            if (leaf.material) {
+                                leaf.material.opacity = scale;
+                            }
+                            if (tree.burnProgress >= 1.0) {
+                                leaf.visible = false;
+                            }
+                        });
+                    }
+                    
+                    // Blacken trunk
+                    if (tree.trunk && tree.trunk.material) {
+                        const origColor = new THREE.Color(tree.trunk.userData.originalColor !== undefined ? tree.trunk.userData.originalColor : 0x3d2314);
+                        tree.trunk.material.color.copy(origColor).lerp(new THREE.Color(0x111111), tree.burnProgress);
+                    }
+                    
+                    // Animate flames on tree
+                    const flames = tree.group.getObjectByName('treeFlames');
+                    if (flames && flames.userData && flames.userData.cubes) {
+                        flames.userData.cubes.forEach(c => {
+                            c.mesh.position.y += delta * c.speed;
+                            c.mesh.position.x += Math.sin(elapsedSeconds * 5.0 + c.initialY) * 0.05 * delta;
+                            c.mesh.position.z += Math.cos(elapsedSeconds * 5.0 + c.initialY) * 0.05 * delta;
+                            if (c.mesh.position.y > 3.8) {
+                                c.mesh.position.y = 0.1;
+                                c.mesh.position.x = c.offsetX;
+                                c.mesh.position.z = c.offsetZ;
+                                c.mesh.scale.set(1, 1, 1);
+                            } else {
+                                const h = c.mesh.position.y / 3.8;
+                                const s = Math.max(0.1, 1.0 - h);
+                                c.mesh.scale.set(s, s, s);
+                            }
+                        });
+                    }
+                    
+                    // Flicker tree light
+                    const light = tree.group.getObjectByName('treeLight');
+                    if (light) {
+                        light.intensity = 1.2 + Math.sin(elapsedSeconds * 15.0) * 0.25;
+                    }
+                    
+                    if (tree.burnProgress >= 1.0) {
+                        tree.isBurning = false;
+                        tree.isBurned = true;
+                        
+                        // Clean up flames and light
+                        if (flames) tree.group.remove(flames);
+                        const light = tree.group.getObjectByName('treeLight');
+                        if (light) tree.group.remove(light);
+                        
+                        // Make trunk completely black and keep scale
+                        if (tree.trunk && tree.trunk.material) {
+                            tree.trunk.material.color.setHex(0x111111);
+                        }
+                    }
+                }
+                
                 // 3. Leaf rotting
-                if (tree.isChopped && !tree.isFelling && tree.fellProgress >= 1.0) {
+                if (tree.isChopped && !tree.isFelling && tree.fellProgress >= 1.0 && !tree.isBurned) {
                     if (!tree.rotProgress) {
                         tree.leaves.forEach(leaf => {
                             if (leaf.material) {
@@ -5018,12 +6380,152 @@ export function initNeonBruiser(): Cleanup {
             return bestTree;
         }
 
-        function chopTreeDown(tree) {
+        function getStoneAimTarget() {
+            const myX = camera.position.x;
+            const myY = camera.position.y;
+            const myZ = camera.position.z;
+            const lookDir = new THREE.Vector3();
+            camera.getWorldDirection(lookDir);
+            
+            let bestStone = null;
+            let bestDist = Infinity;
+            
+            worldStones.forEach(stone => {
+                if (stone.mesh.visible === false) return;
+                
+                const dx = stone.x - myX;
+                // Adjust Y aimed target to match the flat profile of embedded stones
+                const dy = (stone.y + 0.1) - myY;
+                const dz = stone.z - myZ;
+                const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                
+                if (dist < 5.0) {
+                    const toStone = new THREE.Vector3(dx, dy, dz).normalize();
+                    const dot = lookDir.dot(toStone);
+                    if (dot > 0.85) {
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            bestStone = stone;
+                        }
+                    }
+                }
+            });
+            return bestStone;
+        }
+        
+        function getCoralAimTarget() {
+            const myX = camera.position.x;
+            const myY = camera.position.y;
+            const myZ = camera.position.z;
+            const lookDir = new THREE.Vector3();
+            camera.getWorldDirection(lookDir);
+            
+            let bestCoral = null;
+            let bestDist = Infinity;
+            
+            worldCorals.forEach(coral => {
+                if (coral.mesh.visible === false) return;
+                
+                const dx = coral.x - myX;
+                const dy = (coral.y + 0.3) - myY;
+                const dz = coral.z - myZ;
+                const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                
+                if (dist < 5.0) {
+                    const toCoral = new THREE.Vector3(dx, dy, dz).normalize();
+                    const dot = lookDir.dot(toCoral);
+                    if (dot > 0.85) {
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            bestCoral = coral;
+                        }
+                    }
+                }
+            });
+            return bestCoral;
+        }
+        
+        function mineNaturalStone(stone, sendNetwork = true) {
+            const coordKey = `${stone.x.toFixed(1)},${stone.z.toFixed(1)}`;
+            minedStoneCoords.add(coordKey);
+            
+            stone.mesh.visible = false;
+            updateTerrainMeshNear(stone.x, stone.z);
+            AudioSynth.playHit(stone.mesh.position);
+            
+            const spawnPos = stone.mesh.position.clone();
+            spawnPos.y += 0.3;
+            
+            if (stone.type === 'limestone') {
+                spawnDroppedFood('limestone', spawnPos, 2.0);
+                addChatMessage("Mined limestone!", "system");
+            } else if (stone.type === 'coal_ore') {
+                spawnDroppedFood('coal', spawnPos, 2.0);
+                addChatMessage("Mined coal!", "system");
+            } else if (stone.type === 'iron_ore') {
+                spawnDroppedFood('raw_iron', spawnPos, 2.0);
+                addChatMessage("Mined raw iron!", "system");
+            } else if (stone.type === 'copper_ore') {
+                spawnDroppedFood('raw_copper', spawnPos, 2.0);
+                addChatMessage("Mined raw copper!", "system");
+            }
+            
+            if (sendNetwork && isConnected) {
+                sendNetworkMessage({
+                    type: 'mine-stone',
+                    x: stone.x,
+                    z: stone.z
+                });
+            }
+            if (isHost) {
+                saveWorld(false);
+            }
+        }
+        
+        function mineNaturalCoral(coral, sendNetwork = true) {
+            const coordKey = `${coral.x.toFixed(1)},${coral.z.toFixed(1)}`;
+            minedCoralCoords.add(coordKey);
+            
+            coral.mesh.visible = false;
+            AudioSynth.playHit(coral.mesh.position);
+            
+            // Spawn dropped coral item
+            const spawnPos = coral.mesh.position.clone();
+            spawnPos.y += 0.3;
+            spawnDroppedFood('coral', spawnPos);
+            
+            addChatMessage("Mined coral!", "system");
+            
+            if (sendNetwork && isConnected) {
+                sendNetworkMessage({
+                    type: 'mine-coral',
+                    x: coral.x,
+                    z: coral.z
+                });
+            }
+            if (isHost) {
+                saveWorld(false);
+            }
+        }
+
+        function chopTreeDown(tree, sendNetwork = true) {
             const coordKey = `${tree.x.toFixed(1)},${tree.z.toFixed(1)}`;
             choppedTreeCoords.add(coordKey);
             
             tree.isChopped = true;
             tree.logsLeft = 4;
+
+            if (tree.isBurning) {
+                tree.isBurning = false;
+                tree.isBurned = true;
+                const flames = tree.group.getObjectByName('treeFlames');
+                if (flames) tree.group.remove(flames);
+                const light = tree.group.getObjectByName('treeLight');
+                if (light) tree.group.remove(light);
+                if (tree.trunk && tree.trunk.material) {
+                    tree.trunk.material.color.setHex(0x111111);
+                }
+            }
 
             AudioSynth.playHit(tree.group.position);
             setTimeout(() => AudioSynth.playHit(tree.group.position), 150);
@@ -5040,10 +6542,22 @@ export function initNeonBruiser(): Cleanup {
                 }
             });
             
-            addChatMessage("Tree chopped down! Click the fallen trunk to get logs.", "system");
+            if (tree.isBurned) {
+                addChatMessage("Burned tree chopped down! Click the fallen trunk to get charcoal.", "system");
+            } else {
+                addChatMessage("Tree chopped down! Click the fallen trunk to get logs.", "system");
+            }
+            
+            if (sendNetwork && isConnected) {
+                sendNetworkMessage({
+                    type: 'chop-tree',
+                    x: tree.x,
+                    z: tree.z
+                });
+            }
         }
 
-        function harvestLog(tree) {
+        function harvestLog(tree, sendNetwork = true) {
             if (tree.logsLeft <= 0) return;
             
             tree.logsLeft--;
@@ -5061,12 +6575,28 @@ export function initNeonBruiser(): Cleanup {
             spawnPos.x += dx;
             spawnPos.z += dz;
             spawnPos.y += 0.3;
-            spawnDroppedFood('log', spawnPos);
+            const dropItem = tree.isBurned ? 'charcoal' : 'log';
+            spawnDroppedFood(dropItem, spawnPos);
             
-            addChatMessage(`Chopped out a log! (${tree.logsLeft} logs left)`, "system");
+            if (tree.isBurned) {
+                addChatMessage(`Harvested a piece of charcoal! (${tree.logsLeft} left)`, "system");
+            } else {
+                addChatMessage(`Chopped out a log! (${tree.logsLeft} logs left)`, "system");
+            }
             
             if (tree.logsLeft <= 0) {
                 tree.group.visible = false;
+            }
+            
+            if (sendNetwork && isConnected) {
+                sendNetworkMessage({
+                    type: 'harvest-log',
+                    x: tree.x,
+                    z: tree.z
+                });
+            }
+            if (isHost) {
+                saveWorld(false);
             }
         }
 
@@ -5199,6 +6729,7 @@ export function initNeonBruiser(): Cleanup {
                 vy: arrowVel.y,
                 vz: arrowVel.z
             });
+            useToolInHand();
         }
 
         // 2D XZ Plane Horizontal hit check fixing close-combat angles
@@ -5275,11 +6806,18 @@ export function initNeonBruiser(): Cleanup {
                                 });
 
                                 z.health = Math.max(0, z.health - damage);
+                                if (z.type === 'crawling_tree' && z.state === 'standing') {
+                                    z.state = 'rising';
+                                    z.stateTime = 0;
+                                    spawnDirtParticles(z.mesh.position, 12);
+                                    AudioSynth.playClack(z.mesh.position);
+                                }
                                 z.kx = kDir.x;
                                 z.kz = kDir.y;
                                 if (z.health <= 0) {
                                     z.isDead = true;
                                     z.deathTime = 0;
+                                    handleZombieDeathDrops(z);
                                 }
                                 opponentHit = true;
                                 break; // hit one zombie per strike
@@ -5363,6 +6901,7 @@ export function initNeonBruiser(): Cleanup {
                 for (let i = animals.length - 1; i >= 0; i--) {
                     const a = animals[i];
                     if (a.isDead) continue;
+                    if (a.rider === 'local') continue; // Don't hit your own horse!
                     const ax = a.mesh.position.x;
                     const az = a.mesh.position.z;
                     const distXZ = Math.sqrt((ax - myX) ** 2 + (az - myZ) ** 2);
@@ -5598,11 +7137,11 @@ export function initNeonBruiser(): Cleanup {
                 const item = armorItems[slot];
                 if (item) {
                     if (item.startsWith('turtle_')) {
-                        reduction += 0.16; // Tier 5: 16% per piece
+                        reduction += 0.04; // Tier 1: 4% per piece (lowest level armor)
                     } else if (item.startsWith('leather_')) {
-                        reduction += 0.12; // Tier 4: 12% per piece
+                        reduction += 0.08; // Tier 2: 8% per piece
                     } else if (item.startsWith('iron_')) {
-                        reduction += 0.08; // Tier 3: 8% per piece
+                        reduction += 0.12; // Tier 3: 12% per piece (highest level armor)
                     }
                 }
             });
@@ -5712,16 +7251,18 @@ export function initNeonBruiser(): Cleanup {
                 const type = hotbarItems[i];
                 if (type) {
                     const count = hotbarCounts[i];
+                    const dur = hotbarDurability[i];
                     for (let c = 0; c < count; c++) {
                         const dropPos = playerPos.clone().add(new THREE.Vector3(
                             (Math.random() - 0.5) * 2.5,
                             0.2,
                             (Math.random() - 0.5) * 2.5
                         ));
-                        spawnDroppedFood(type, dropPos);
+                        spawnDroppedFood(type, dropPos, 1.0, dur);
                     }
                     hotbarItems[i] = null;
                     hotbarCounts[i] = 0;
+                    hotbarDurability[i] = null;
                 }
             }
             // Drop main inventory items
@@ -5729,22 +7270,67 @@ export function initNeonBruiser(): Cleanup {
                 const type = inventoryItems[i];
                 if (type) {
                     const count = inventoryCounts[i];
+                    const dur = inventoryDurability[i];
                     for (let c = 0; c < count; c++) {
                         const dropPos = playerPos.clone().add(new THREE.Vector3(
                             (Math.random() - 0.5) * 2.5,
                             0.2,
                             (Math.random() - 0.5) * 2.5
                         ));
-                        spawnDroppedFood(type, dropPos);
+                        spawnDroppedFood(type, dropPos, 1.0, dur);
                     }
                     inventoryItems[i] = null;
                     inventoryCounts[i] = 0;
+                    inventoryDurability[i] = null;
                 }
             }
+            // Drop armor items
+            const armorSlots = ['helmet', 'chestplate', 'leggings', 'gauntlets', 'boots'];
+            for (const slot of armorSlots) {
+                const type = armorItems[slot];
+                if (type) {
+                    const dropPos = playerPos.clone().add(new THREE.Vector3(
+                        (Math.random() - 0.5) * 2.5,
+                        0.2,
+                        (Math.random() - 0.5) * 2.5
+                    ));
+                    spawnDroppedFood(type, dropPos);
+                    armorItems[slot] = null;
+                }
+            }
+            // Drop held item
+            if (heldItem) {
+                const type = heldItem.type;
+                const count = heldItem.count;
+                const dur = heldItem.durability !== undefined ? heldItem.durability : null;
+                for (let c = 0; c < count; c++) {
+                    const dropPos = playerPos.clone().add(new THREE.Vector3(
+                        (Math.random() - 0.5) * 2.5,
+                        0.2,
+                        (Math.random() - 0.5) * 2.5
+                    ));
+                    spawnDroppedFood(type, dropPos, 1.0, dur);
+                }
+                heldItem = null;
+            }
+            // Cancel eating
+            if (isEating) {
+                isEating = false;
+                if (rightHand) {
+                    rightHand.position.set(0.35, -0.3, -0.7);
+                    rightHand.rotation.set(0, 0, 0);
+                }
+            }
+            // Reset active weapon to fists
+            activeWeapon = 'fists';
+            updateWeaponUI();
+
             // Re-initialize player starting inventory: disabled on death (retained on startup/reset only)
             updateHotbarUI();
             updateInventoryUI();
             updateMinecraftStatsUI();
+            updateFloatingItemUI();
+            saveWorld(false);
         }
 
         function showDeathToast(reason) {
@@ -5761,6 +7347,7 @@ export function initNeonBruiser(): Cleanup {
             }
         }
 
+
         function declareLoser(reason) {
             dropInventory();
             AudioSynth.playLose();
@@ -5769,24 +7356,9 @@ export function initNeonBruiser(): Cleanup {
             showDeathToast(reason);
             addChatMessage("You died! Cause: " + reason, "system");
 
-            // Reset health and hunger
-            myHealth = 100;
-            hunger = 100;
+            // Reset health to 0 to block inputs and show dead state
+            myHealth = 0;
             updateHud();
-
-            // Reset playerInCave & dimensions
-            playerInCave = false;
-            
-            // Re-center ocean and sky dome immediately
-            updateChunks();
-
-            // Teleport player back to start coordinates
-            const spawnZ = isHost ? 12 : 28;
-            const spawnY = getTerrainHeight(60, spawnZ, false) + 1.6;
-            camera.position.set(60, spawnY, spawnZ);
-            velocity.set(0, 0, 0);
-            knockbackVel.set(0, 0, 0);
-            isGrounded = true;
 
             // Dismount cube/exit turret/bush if in them
             if (inTurret) {
@@ -5811,21 +7383,79 @@ export function initNeonBruiser(): Cleanup {
                 reason: reason
             });
             syncPlayerPosition();
+
+            // Release pointer lock so user can interact with buttons
+            exitPointerLock();
+
+            // Show Death Screen
+            if (elDeathScreen) {
+                elDeathScreen.style.display = 'flex';
+            }
+            if (elDeathScreenSubtitle) {
+                elDeathScreenSubtitle.innerText = reason || "Unknown causes";
+            }
+
+            // Check if bed is set and exists, or if ANY bed exists in the world
+            let bedExists = false;
+            if (respawnPoint) {
+                bedExists = placedObjects.some(obj => 
+                    obj.type === 'bed' &&
+                    Math.abs(obj.pos.x - respawnPoint.x) < 1.5 &&
+                    Math.abs(obj.pos.z - respawnPoint.z) < 1.5 &&
+                    isDimensionCave(obj.inCave) === isDimensionCave(respawnPoint.inCave)
+                );
+            }
+            if (!bedExists) {
+                bedExists = placedObjects.some(obj => obj.type === 'bed');
+            }
+
+            if (btnRespawnBed) {
+                const btn = btnRespawnBed;
+                if (bedExists) {
+                    btn.disabled = false;
+                    btn.style.opacity = '1';
+                    if (respawnBedStatus) respawnBedStatus.innerText = "";
+                } else {
+                    btn.disabled = true;
+                    btn.style.opacity = '0.5';
+                    if (respawnBedStatus) {
+                        respawnBedStatus.innerText = respawnPoint ? "Your bed was missing or obstructed" : "No bed spawn point set";
+                    }
+                }
+            }
+
+            // Auto-respawn after a short delay (e.g. 1.5 seconds)
+            setTimeout(() => {
+                if (myHealth <= 0 && gameActive) {
+                    respawnPlayer(true);
+                }
+            }, 1500);
         }
 
         function updateHud() {
             document.getElementById('player-health-fill').style.width = myHealth + '%';
             document.getElementById('player-health-text').innerText = myHealth + ' HP';
 
+            const playerHudName = document.getElementById('player-hud-name');
+            if (playerHudName) {
+                playerHudName.innerText = (myAppearance.name || 'player').toUpperCase();
+            }
+
             document.getElementById('opponent-health-fill').style.width = oppHealth + '%';
             document.getElementById('opponent-health-text').innerText = oppHealth + ' HP';
+
+            const opponentHudName = document.getElementById('opponent-hud-name');
+            if (opponentHudName) {
+                opponentHudName.innerText = (opponentAppearance.name || 'opponent').toUpperCase();
+            }
 
             updateMinecraftStatsUI();
             updateHotbarUI();
         }
 
-        function saveWorld() {
+        function saveWorld(showChatFeedback = true) {
             if (!gameActive) return;
+            if (!isHost) return;
             const saveId = activeWorldId || 'world_' + Date.now();
             
             // Serialize placedObjects (omit THREE.Mesh references)
@@ -5838,8 +7468,12 @@ export function initNeonBruiser(): Cleanup {
                 initialRotationY: obj.initialRotationY,
                 furnaceState: obj.furnaceState || null,
                 chestInventoryItems: obj.chestInventoryItems || null,
-                chestInventoryCounts: obj.chestInventoryCounts || null
+                chestInventoryCounts: obj.chestInventoryCounts || null,
+                chestInventoryDurability: obj.chestInventoryDurability || null,
+                inCave: isDimensionCave(obj.inCave)
             }));
+            
+            const savedCycleMs = (Date.now() + timeOffset) % (CYCLE_DURATION * 1000);
             
             const saveObj = {
                 id: saveId,
@@ -5847,7 +7481,9 @@ export function initNeonBruiser(): Cleanup {
                 mode: currentGameMode,
                 cameraView: cameraView,
                 cheatsEnabled: cheatsEnabled,
+                physicsMode: physicsMode,
                 date: new Date().toLocaleString(),
+                savedCycleMs: savedCycleMs,
                 
                 myHealth: myHealth,
                 hunger: hunger,
@@ -5856,217 +7492,396 @@ export function initNeonBruiser(): Cleanup {
                 playerY: camera.position.y,
                 playerZ: camera.position.z,
                 playerRotY: camera.rotation.y,
-                playerInCave: playerInCave,
+                playerInCave: isDimensionCave(playerInCave),
+                respawnPoint: respawnPoint ? {
+                    x: respawnPoint.x,
+                    y: respawnPoint.y,
+                    z: respawnPoint.z,
+                    inCave: isDimensionCave(respawnPoint.inCave)
+                } : null,
                 
                 inventoryItems: inventoryItems,
                 inventoryCounts: inventoryCounts,
+                inventoryDurability: inventoryDurability,
                 hotbarItems: hotbarItems,
                 hotbarCounts: hotbarCounts,
+                hotbarDurability: hotbarDurability,
                 selectedHotbarIndex: selectedHotbarIndex,
                 armorItems: armorItems,
                 
                  placedObjects: serializedObjects,
-                 minedStoneCoords: Array.from(minedStoneCoords),
-                 choppedTreeCoords: Array.from(choppedTreeCoords),
-                 minedCoralCoords: Array.from(minedCoralCoords),
-                 obtainedItems: Array.from(obtainedItems)
+                  minedStoneCoords: Array.from(minedStoneCoords),
+                  choppedTreeCoords: Array.from(choppedTreeCoords),
+                  minedCoralCoords: Array.from(minedCoralCoords),
+                  minedDesertHoles: Array.from(minedDesertHoles),
+                  obtainedItems: Array.from(obtainedItems)
              };
             
-            const saves = JSON.parse(localStorage.getItem('survivalism_saves') || '[]');
-            const index = saves.findIndex(s => s.id === saveId);
-            if (index >= 0) {
-                saves[index] = saveObj;
-            } else {
-                saves.push(saveObj);
-            }
-            
-            localStorage.setItem('survivalism_saves', JSON.stringify(saves));
-            activeWorldId = saveId;
-            addChatMessage("World saved successfully!", "system");
-        }
+             const saves = getSavedWorlds();
+             const index = saves.findIndex(s => s.id === saveId);
+             if (index >= 0) {
+                 saves[index] = saveObj;
+             } else {
+                 saves.push(saveObj);
+             }
+             
+             saveWorldsList(saves);
+             activeWorldId = saveId;
+             if (showChatFeedback) {
+                 addChatMessage("World saved successfully!", "system");
+             }
+         }
+ 
+         function loadWorld(saveId) {
+             const saves = getSavedWorlds();
+             const save = saves.find(s => s.id === saveId);
+             if (!save) return;
+             
+             if (!save.mpCode) {
+                 save.mpCode = generateFiveLetterWord();
+                 const idx = saves.findIndex(s => s.id === saveId);
+                 if (idx >= 0) {
+                     saves[idx].mpCode = save.mpCode;
+                     saveWorldsList(saves);
+                 }
+             }
+             
+             isHost = true;
+             isConnected = false;
+             
+             // Initialize PeerJS with the save's multiplayer code
+             initPeer(save.mpCode);
+             
+             if (!scene) {
+                 init3D();
+                 let turretX = -78;
+                 let turretZ = -78;
+                 spawnTurretMesh(turretX, turretZ);
+                 
+                 const villagerData = [];
+                 const villageCenter = { x: -78, z: -78 };
+                 for (let i = 0; i < 5; i++) {
+                     const id = Math.random().toString(36).substr(2, 6);
+                     const vx = villageCenter.x + (Math.random() - 0.5) * 25;
+                     const vz = villageCenter.z + (Math.random() - 0.5) * 25;
+                     villagerData.push({ id, x: vx, z: vz });
+                 }
+                 spawnVillagers(villagerData);
+                 spawnInitialAnimals();
+                 animate();
+             }
+             
+             resetGameScene();
+             
+             if (save.savedCycleMs !== undefined) {
+                 const totalCycleMs = CYCLE_DURATION * 1000;
+                 timeOffset = (save.savedCycleMs - (Date.now() % totalCycleMs) + totalCycleMs) % totalCycleMs;
+             } else {
+                 timeOffset = 30000 - (Date.now() % (CYCLE_DURATION * 1000));
+             }
+             
+             activeWorldId = save.id;
+             currentWorldName = save.worldName || 'Unnamed World';
+             currentGameMode = save.mode;
+             cameraView = save.cameraView || 'first';
+             cheatsEnabled = !!save.cheatsEnabled;
+             physicsMode = save.physicsMode || 'normal';
+             
+             myHealth = save.myHealth !== undefined ? save.myHealth : 100;
+             hunger = save.hunger !== undefined ? save.hunger : 100;
+             playerInCave = isDimensionCave(save.playerInCave);
+             respawnPoint = save.respawnPoint ? {
+                 x: save.respawnPoint.x,
+                 y: save.respawnPoint.y,
+                 z: save.respawnPoint.z,
+                 inCave: isDimensionCave(save.respawnPoint.inCave)
+             } : null;
+             
+             const px = typeof save.playerX === 'number' ? save.playerX : 60;
+             const py = typeof save.playerY === 'number' ? save.playerY : getTerrainHeight(px, typeof save.playerZ === 'number' ? save.playerZ : 20) + 1.6;
+             const pz = typeof save.playerZ === 'number' ? save.playerZ : 20;
+             camera.position.set(px, py, pz);
+             camera.rotation.y = typeof save.playerRotY === 'number' ? save.playerRotY : 0;
+             velocity.set(0, 0, 0);
+             isGrounded = false;
+             highestYSinceGrounded = camera.position.y;
+             
+             inventoryItems = save.inventoryItems ? [...save.inventoryItems] : new Array(27).fill(null);
+             inventoryCounts = save.inventoryCounts ? [...save.inventoryCounts] : new Array(27).fill(0);
+             inventoryDurability = save.inventoryDurability ? [...save.inventoryDurability] : new Array(27).fill(null);
+             hotbarItems = save.hotbarItems ? [...save.hotbarItems] : new Array(9).fill(null);
+             hotbarCounts = save.hotbarCounts ? [...save.hotbarCounts] : new Array(9).fill(0);
+             hotbarDurability = save.hotbarDurability ? [...save.hotbarDurability] : new Array(9).fill(null);
+             initDurabilityArrays();
+             selectedHotbarIndex = save.selectedHotbarIndex || 0;
+             if (save.armorItems) {
+                 armorItems = { ...save.armorItems };
+             } else {
+                 armorItems = {
+                     helmet: null,
+                     chestplate: null,
+                     leggings: null,
+                     gauntlets: null,
+                     boots: null
+                 };
+             }
+             
+             minedStoneCoords = new Set(save.minedStoneCoords || []);
+             choppedTreeCoords = new Set(save.choppedTreeCoords || []);
+             minedCoralCoords = new Set(save.minedCoralCoords || []);
+             minedDesertHoles = new Set(save.minedDesertHoles || []);
+             
+             if (typeof resetWorldStones === 'function') resetWorldStones();
+             if (typeof resetWorldCorals === 'function') resetWorldCorals();
+             if (typeof resetWorldTrees === 'function') resetWorldTrees();
+             
+             // Apply terrain holes for loaded mined stones
+             minedStoneCoords.forEach(coordKey => {
+                 const parts = coordKey.split(',');
+                 if (parts.length === 2) {
+                     const sx = parseFloat(parts[0]);
+                     const sz = parseFloat(parts[1]);
+                     if (!isNaN(sx) && !isNaN(sz)) {
+                         updateTerrainMeshNear(sx, sz);
+                     }
+                 }
+             });
 
-        function loadWorld(saveId) {
-            const saves = JSON.parse(localStorage.getItem('survivalism_saves') || '[]');
-            const save = saves.find(s => s.id === saveId);
-            if (!save) return;
-            
-            if (!scene) {
-                init3D();
-                let turretX = -78;
-                let turretZ = -78;
-                spawnTurretMesh(turretX, turretZ);
-                
-                const villagerData = [];
-                const villageCenter = { x: -78, z: -78 };
-                for (let i = 0; i < 5; i++) {
-                    const id = Math.random().toString(36).substr(2, 6);
-                    const vx = villageCenter.x + (Math.random() - 0.5) * 25;
-                    const vz = villageCenter.z + (Math.random() - 0.5) * 25;
-                    villagerData.push({ id, x: vx, z: vz });
-                }
-                spawnVillagers(villagerData);
-                spawnInitialAnimals();
-                animate();
-            }
-            
-            resetGameScene();
-            
-            activeWorldId = save.id;
-            currentWorldName = save.worldName;
-            currentGameMode = save.mode;
-            cameraView = save.cameraView || 'first';
-            cheatsEnabled = !!save.cheatsEnabled;
-            
-            myHealth = save.myHealth;
-            hunger = save.hunger;
-            playerInCave = !!save.playerInCave;
-            
-            camera.position.set(save.playerX, save.playerY, save.playerZ);
-            camera.rotation.y = save.playerRotY;
-            velocity.set(0, 0, 0);
-            isGrounded = false;
-            highestYSinceGrounded = camera.position.y;
-            
-            inventoryItems = [...save.inventoryItems];
-            inventoryCounts = [...save.inventoryCounts];
-            hotbarItems = [...save.hotbarItems];
-            hotbarCounts = [...save.hotbarCounts];
-            selectedHotbarIndex = save.selectedHotbarIndex || 0;
-            if (save.armorItems) {
-                armorItems = { ...save.armorItems };
-            } else {
-                armorItems = {
-                    helmet: null,
-                    chestplate: null,
-                    leggings: null,
-                    gauntlets: null,
-                    boots: null
-                };
-            }
-            
-            minedStoneCoords = new Set(save.minedStoneCoords || []);
-            choppedTreeCoords = new Set(save.choppedTreeCoords || []);
-            minedCoralCoords = new Set(save.minedCoralCoords || []);
-            
-            clearPlacedObjects();
-            obtainedItems.clear();
-            if (save.obtainedItems) {
-                save.obtainedItems.forEach(item => obtainedItems.add(item));
-            } else {
-                obtainedItems.add('wooden_axe');
-                obtainedItems.add('crafting_bench');
-            }
-            if (save.placedObjects) {
-                save.placedObjects.forEach(obj => {
-                    const pos = new THREE.Vector3(obj.x, obj.y, obj.z);
-                    spawnPlacedObject(obj.type, pos, false);
-                    const spawned = placedObjects[placedObjects.length - 1];
-                    if (spawned) {
-                        spawned.isOpen = !!obj.isOpen;
-                        spawned.initialRotationY = obj.initialRotationY;
-                        if (spawned.mesh) {
-                            spawned.mesh.rotation.y = obj.initialRotationY + (spawned.isOpen ? Math.PI / 2 : 0);
-                        }
-                        if (obj.furnaceState) {
-                            spawned.furnaceState = obj.furnaceState;
-                        }
-                        if (obj.chestInventoryItems) {
-                            spawned.chestInventoryItems = obj.chestInventoryItems;
-                            spawned.chestInventoryCounts = obj.chestInventoryCounts;
-                        }
-                    }
-                });
-            }
-            
-            // Sync visibility based on whether the player is in a cave
-            clientZombies.forEach(mesh => { mesh.visible = (!!mesh.inCave === playerInCave); });
-            animals.forEach(a => a.mesh.visible = !playerInCave);
-            bees.forEach(b => b.mesh.visible = !playerInCave);
-            clientBees.forEach(mesh => mesh.visible = !playerInCave);
-            
-            updateCheatsUIState();
-            
-            updateHud();
-            updateHotbarUI();
-            updateInventoryUI();
-            updateMinecraftStatsUI();
-            updateWeaponUI();
-            
-            document.getElementById('lobby').style.display = 'none';
-            document.getElementById('start-screen').style.display = 'none';
-            document.getElementById('hud').style.display = 'flex';
-            
-            gameActive = true;
-            document.activeElement.blur();
-            window.focus();
-            
-            updateChunks();
-            requestPointerLock();
-        }
+             // Apply terrain holes for loaded mined desert holes
+             minedDesertHoles.forEach(coordKey => {
+                 const parts = coordKey.split(',');
+                 if (parts.length === 2) {
+                     const hx = parseFloat(parts[0]);
+                     const hz = parseFloat(parts[1]);
+                     if (!isNaN(hx) && !isNaN(hz)) {
+                         updateTerrainMeshNear(hx, hz);
+                     }
+                 }
+             });
+             
+             clearPlacedObjects();
+             obtainedItems.clear();
+             if (save.obtainedItems) {
+                 save.obtainedItems.forEach(item => obtainedItems.add(item));
+             } else {
+                 obtainedItems.add('wooden_axe');
+                 obtainedItems.add('crafting_bench');
+             }
+             if (save.placedObjects) {
+                 save.placedObjects.forEach(obj => {
+                     const pos = new THREE.Vector3(obj.x, obj.y, obj.z);
+                     const spawned = spawnPlacedObject(obj.type, pos, false);
+                     if (spawned) {
+                         spawned.isOpen = !!obj.isOpen;
+                         spawned.initialRotationY = typeof obj.initialRotationY === 'number' ? obj.initialRotationY : (spawned.mesh ? spawned.mesh.rotation.y : 0);
+                         spawned.inCave = obj.inCave !== undefined ? isDimensionCave(obj.inCave) : false;
+                         if (spawned.mesh) {
+                             spawned.mesh.rotation.y = spawned.initialRotationY + (spawned.isOpen ? Math.PI / 2 : 0);
+                             spawned.mesh.visible = (isDimensionCave(spawned.inCave) === isDimensionCave(playerInCave));
+                         }
+                         if (obj.furnaceState) {
+                             spawned.furnaceState = obj.furnaceState;
+                         }
+                          if (obj.chestInventoryItems) {
+                              spawned.chestInventoryItems = obj.chestInventoryItems;
+                              spawned.chestInventoryCounts = obj.chestInventoryCounts;
+                              spawned.chestInventoryDurability = obj.chestInventoryDurability || new Array(27).fill(null);
+                              for (let i = 0; i < 27; i++) {
+                                  if (spawned.chestInventoryItems[i] && isTool(spawned.chestInventoryItems[i]) && (spawned.chestInventoryDurability[i] === null || spawned.chestInventoryDurability[i] === undefined)) {
+                                      spawned.chestInventoryDurability[i] = getMaxDurability(spawned.chestInventoryItems[i]);
+                                  }
+                              }
+                          }
+                     }
+                 });
+             }
+             
+             // Sync visibility based on whether the player is in a cave
+             clientZombies.forEach(mesh => { mesh.visible = (isDimensionCave(mesh.inCave) === isDimensionCave(playerInCave)); });
+             animals.forEach(a => a.mesh.visible = !isDimensionCave(playerInCave));
+             bees.forEach(b => b.mesh.visible = !isDimensionCave(playerInCave));
+             clientBees.forEach(mesh => mesh.visible = !isDimensionCave(playerInCave));
+             
+             updateCheatsUIState();
+             
+             updateHud();
+             updateHotbarUI();
+             updateInventoryUI();
+             updateMinecraftStatsUI();
+             updateWeaponUI();
+             
+             document.getElementById('lobby').style.display = 'none';
+             document.getElementById('start-screen').style.display = 'none';
+             document.getElementById('hud').style.display = 'flex';
+             
+             gameActive = true;
+             document.activeElement.blur();
+             window.focus();
+             
+             updateChunks();
+             requestPointerLock();
+         }
+ 
+         function deleteWorld(saveId) {
+             let saves = getSavedWorlds();
+             saves = saves.filter(s => s.id !== saveId);
+             saveWorldsList(saves);
+             renderSavesList();
+         }
+ 
+          function showMultiplayerCodeModal(save) {
+              if (!save.mpCode) {
+                  save.mpCode = generateFiveLetterWord();
+                  const saves = getSavedWorlds();
+                  const idx = saves.findIndex(s => s.id === save.id);
+                  if (idx >= 0) {
+                      saves[idx].mpCode = save.mpCode;
+                      saveWorldsList(saves);
+                  }
+              }
+              
+              let modal = document.getElementById('mp-code-modal');
+              if (!modal) {
+                  modal = document.createElement('div');
+                  modal.id = 'mp-code-modal';
+                  modal.className = 'overlay interactive';
+                  modal.style.zIndex = '2000';
+                  modal.style.background = 'rgba(5, 5, 10, 0.8)';
+                  modal.style.backdropFilter = 'blur(10px)';
+                  modal.style.webkitBackdropFilter = 'blur(10px)';
+                  modal.style.display = 'none';
+                  modal.style.position = 'fixed';
+                  modal.style.top = '0';
+                  modal.style.left = '0';
+                  modal.style.width = '100%';
+                  modal.style.height = '100%';
+                  modal.style.alignItems = 'center';
+                  modal.style.justifyContent = 'center';
+                  
+                  modal.innerHTML = `
+                      <div class="glass-panel" style="max-width: 400px; padding: 35px; border: 1px solid var(--cyan); box-shadow: 0 0 40px rgba(0, 240, 255, 0.25); text-align: center; display: flex; flex-direction: column; gap: 20px;">
+                          <h2 style="font-family: 'Orbitron', sans-serif; font-size: 1.5rem; color: var(--cyan); text-shadow: var(--text-glow); margin: 0; text-transform: uppercase;">Multiplayer Code</h2>
+                          <p style="color: #8a90a0; font-size: 0.9rem; line-height: 1.5; margin: 0;">Share this code with your friend. When they enter it in their lobby join box, they will connect to your game!</p>
+                          
+                          <div id="mp-code-display" style="font-family: 'Orbitron', sans-serif; font-size: 2.2rem; font-weight: bold; color: var(--magenta); text-shadow: var(--magenta-glow); letter-spacing: 6px; background: rgba(0, 0, 0, 0.4); padding: 15px; border-radius: 8px; border: 1px dashed rgba(255, 0, 127, 0.4); user-select: all; text-transform: uppercase; margin: 10px 0;">
+                              ABCDE
+                          </div>
+                          
+                          <div style="display: flex; gap: 10px; width: 100%;">
+                              <button id="mp-code-btn-copy" class="btn btn-cyan" style="flex: 1; padding: 12px; margin: 0;">Copy Code</button>
+                              <button id="mp-code-btn-close" class="btn btn-secondary" style="flex: 1; padding: 12px; margin: 0;">Close</button>
+                          </div>
+                      </div>
+                  `;
+                  document.body.appendChild(modal);
+              }
+              
+              const codeDisplay = modal.querySelector('#mp-code-display');
+              if (codeDisplay) codeDisplay.innerText = save.mpCode;
+              
+              const copyBtn = modal.querySelector('#mp-code-btn-copy');
+              if (copyBtn) {
+                  copyBtn.innerText = "Copy Code";
+                  const newCopyBtn = copyBtn.cloneNode(true);
+                  copyBtn.parentNode.replaceChild(newCopyBtn, copyBtn);
+                  newCopyBtn.addEventListener('click', () => {
+                      navigator.clipboard.writeText(save.mpCode).then(() => {
+                          newCopyBtn.innerText = "Copied!";
+                          setTimeout(() => { newCopyBtn.innerText = "Copy Code"; }, 2000);
+                      });
+                  });
+              }
+              
+              const closeBtn = modal.querySelector('#mp-code-btn-close');
+              if (closeBtn) {
+                  const newCloseBtn = closeBtn.cloneNode(true);
+                  closeBtn.parentNode.replaceChild(newCloseBtn, closeBtn);
+                  newCloseBtn.addEventListener('click', () => {
+                      modal.style.display = 'none';
+                  });
+              }
+              
+              modal.style.display = 'flex';
+          }
 
-        function deleteWorld(saveId) {
-            let saves = JSON.parse(localStorage.getItem('survivalism_saves') || '[]');
-            saves = saves.filter(s => s.id !== saveId);
-            localStorage.setItem('survivalism_saves', JSON.stringify(saves));
-            renderSavesList();
-        }
+          function renderSavesList() {
+              const savesContainer = document.getElementById('saves-list');
+              if (!savesContainer) return;
+              
+              const saves = getSavedWorlds();
+              if (saves.length === 0) {
+                  savesContainer.innerHTML = `<div style="text-align: center; color: #5a6070; padding: 30px; font-size: 0.9rem; border: 1px dashed rgba(255,255,255,0.05); border-radius: 10px;">No saved worlds yet. Create one to begin!</div>`;
+                  return;
+              }
+              
+              // Ensure all saves have a mpCode
+              let savesUpdated = false;
+              saves.forEach(save => {
+                  if (!save.mpCode) {
+                      save.mpCode = generateFiveLetterWord();
+                      savesUpdated = true;
+                  }
+              });
+              if (savesUpdated) {
+                  saveWorldsList(saves);
+              }
 
-        function renderSavesList() {
-            const savesContainer = document.getElementById('saves-list');
-            if (!savesContainer) return;
-            
-            const saves = JSON.parse(localStorage.getItem('survivalism_saves') || '[]');
-            if (saves.length === 0) {
-                savesContainer.innerHTML = `<div style="text-align: center; color: #5a6070; padding: 30px; font-size: 0.9rem; border: 1px dashed rgba(255,255,255,0.05); border-radius: 10px;">No saved worlds yet. Create one to begin!</div>`;
-                return;
-            }
-            
-            savesContainer.innerHTML = '';
-            saves.forEach(save => {
-                const item = document.createElement('div');
-                item.className = 'save-item';
-                
-                const info = document.createElement('div');
-                info.className = 'save-info';
-                
-                const name = document.createElement('div');
-                name.className = 'save-name';
-                name.innerText = save.worldName;
-                
-                const details = document.createElement('div');
-                details.className = 'save-details';
-                details.innerText = `${save.mode === 'freedom' ? 'Freedom Mode' : 'Survival Mode'} • ${save.date}`;
-                
-                info.appendChild(name);
-                info.appendChild(details);
-                
-                const buttons = document.createElement('div');
-                buttons.className = 'save-buttons';
-                
-                const playBtn = document.createElement('button');
-                playBtn.className = 'btn-save-play';
-                playBtn.innerText = 'Play';
-                playBtn.addEventListener('click', () => {
-                    loadWorld(save.id);
-                });
-                
-                const deleteBtn = document.createElement('button');
-                deleteBtn.className = 'btn-save-delete';
-                deleteBtn.innerText = 'Delete';
-                deleteBtn.addEventListener('click', () => {
-                    if (confirm(`Are you sure you want to delete "${save.worldName}"?`)) {
-                        deleteWorld(save.id);
-                    }
-                });
-                
-                buttons.appendChild(playBtn);
-                buttons.appendChild(deleteBtn);
-                
-                item.appendChild(info);
-                item.appendChild(buttons);
-                savesContainer.appendChild(item);
-            });
-        }
+              savesContainer.innerHTML = '';
+              saves.forEach(save => {
+                  const item = document.createElement('div');
+                  item.className = 'save-item';
+                  
+                  const info = document.createElement('div');
+                  info.className = 'save-info';
+                  
+                  const name = document.createElement('div');
+                  name.className = 'save-name';
+                  name.innerText = save.worldName || 'Unnamed World';
+                  
+                  const details = document.createElement('div');
+                  details.className = 'save-details';
+                  details.innerText = `${save.mode === 'freedom' ? 'Freedom Mode' : 'Survival Mode'} • ${save.date || 'Unknown Date'}`;
+                  
+                  info.appendChild(name);
+                  info.appendChild(details);
+                  
+                  const buttons = document.createElement('div');
+                  buttons.className = 'save-buttons';
+                  
+                  const playBtn = document.createElement('button');
+                  playBtn.className = 'btn-save-play';
+                  playBtn.innerText = 'Play';
+                  playBtn.addEventListener('click', () => {
+                      loadWorld(save.id);
+                  });
+                  
+                  const deleteBtn = document.createElement('button');
+                  deleteBtn.className = 'btn-save-delete';
+                  deleteBtn.innerText = 'Delete';
+                  deleteBtn.addEventListener('click', () => {
+                      if (confirm(`Are you sure you want to delete "${save.worldName || 'Unnamed World'}"?`)) {
+                          deleteWorld(save.id);
+                      }
+                  });
+                  
+                  const optionsBtn = document.createElement('button');
+                  optionsBtn.className = 'btn-save-options';
+                  optionsBtn.innerHTML = '&#8942;';
+                  optionsBtn.title = 'Show Multiplayer Code';
+                  optionsBtn.addEventListener('click', (e) => {
+                      e.stopPropagation();
+                      showMultiplayerCodeModal(save);
+                  });
+                  
+                  buttons.appendChild(playBtn);
+                  buttons.appendChild(deleteBtn);
+                  buttons.appendChild(optionsBtn);
+                  
+                  item.appendChild(info);
+                  item.appendChild(buttons);
+                  savesContainer.appendChild(item);
+              });
+          }
 
         function updateCheatsUIState() {
             const btnNewDisabled = document.getElementById('btn-cheats-disabled');
@@ -6085,6 +7900,125 @@ export function initNeonBruiser(): Cleanup {
                 if (btnInGameDisabled) { btnInGameDisabled.classList.add('active'); btnInGameDisabled.style.borderColor = 'var(--cyan)'; btnInGameDisabled.style.background = 'rgba(0, 240, 255, 0.1)'; btnInGameDisabled.style.color = 'var(--cyan)'; }
                 if (btnInGameEnabled) { btnInGameEnabled.classList.remove('active'); btnInGameEnabled.style.borderColor = 'rgba(255,255,255,0.1)'; btnInGameEnabled.style.background = 'rgba(255,255,255,0.02)'; btnInGameEnabled.style.color = '#8a90a0'; }
             }
+        }
+
+        function updatePhysicsUIState() {
+            const btnNewNormal = document.getElementById('btn-physics-normal');
+            const btnNewMoon = document.getElementById('btn-physics-moon');
+            const btnNewBouncy = document.getElementById('btn-physics-bouncy');
+            
+            const btnInGameNormal = document.getElementById('btn-ingame-physics-normal');
+            const btnInGameMoon = document.getElementById('btn-ingame-physics-moon');
+            const btnInGameBouncy = document.getElementById('btn-ingame-physics-bouncy');
+            
+            const setButtonActive = (btn, isActive) => {
+                if (!btn) return;
+                if (isActive) {
+                    btn.classList.add('active');
+                    btn.style.borderColor = 'var(--cyan)';
+                    btn.style.background = 'rgba(0, 240, 255, 0.1)';
+                    btn.style.color = 'var(--cyan)';
+                } else {
+                    btn.classList.remove('active');
+                    btn.style.borderColor = 'rgba(255,255,255,0.1)';
+                    btn.style.background = 'rgba(255,255,255,0.02)';
+                    btn.style.color = '#8a90a0';
+                }
+            };
+            
+            setButtonActive(btnNewNormal, physicsMode === 'normal');
+            setButtonActive(btnNewMoon, physicsMode === 'moon');
+            setButtonActive(btnNewBouncy, physicsMode === 'bouncy');
+            
+            setButtonActive(btnInGameNormal, physicsMode === 'normal');
+            setButtonActive(btnInGameMoon, physicsMode === 'moon');
+            setButtonActive(btnInGameBouncy, physicsMode === 'bouncy');
+        }
+
+        function updateFloatingBlocks(delta) {
+            if (physicsMode === 'normal') return;
+
+            const getBlockHeight = (type) => {
+                if (type === 'crafting_bench') return 1.0;
+                if (type === 'door') return 1.8;
+                if (type === 'stone_slab' || type === 'bed') return 0.45;
+                return 0.9;
+            };
+
+            placedObjects.forEach(obj => {
+                if (obj.falling === undefined) {
+                    obj.falling = false;
+                    obj.vy = 0;
+                }
+
+                if (!obj.falling) {
+                    const terrainY = getTerrainHeight(obj.pos.x, obj.pos.z, obj.inCave);
+                    let supported = (obj.pos.y <= terrainY + 0.05);
+
+                    if (!supported) {
+                        for (let i = 0; i < placedObjects.length; i++) {
+                            const other = placedObjects[i];
+                            if (other === obj) continue;
+                            if (other.falling) continue;
+
+                            const dx = Math.abs(obj.pos.x - other.pos.x);
+                            const dz = Math.abs(obj.pos.z - other.pos.z);
+                            if (dx < 0.45 && dz < 0.45) {
+                                const otherTop = other.pos.y + getBlockHeight(other.type);
+                                if (Math.abs(obj.pos.y - otherTop) < 0.05) {
+                                    supported = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (!supported) {
+                        obj.falling = true;
+                    }
+                }
+
+                if (obj.falling) {
+                    const gravityVal = (physicsMode === 'moon') ? (9.8 * 0.55) : (9.8 * 2.2);
+                    obj.vy -= gravityVal * delta;
+                    obj.pos.y += obj.vy * delta;
+
+                    const terrainY = getTerrainHeight(obj.pos.x, obj.pos.z, obj.inCave);
+                    if (obj.pos.y <= terrainY) {
+                        obj.pos.y = terrainY;
+                        obj.falling = false;
+                        obj.vy = 0;
+                    } else {
+                        for (let i = 0; i < placedObjects.length; i++) {
+                            const other = placedObjects[i];
+                            if (other === obj) continue;
+                            if (other.falling) continue;
+
+                            const dx = Math.abs(obj.pos.x - other.pos.x);
+                            const dz = Math.abs(obj.pos.z - other.pos.z);
+                            if (dx < 0.45 && dz < 0.45) {
+                                const otherTop = other.pos.y + getBlockHeight(other.type);
+                                if (obj.pos.y <= otherTop && obj.pos.y - obj.vy * delta >= otherTop - 0.1) {
+                                    obj.pos.y = otherTop;
+                                    obj.falling = false;
+                                    obj.vy = 0;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (obj.mesh) {
+                        let offset = 0;
+                        if (obj.type === 'log' || obj.type === 'planks' || obj.type === 'stone' || obj.type === 'smooth_stone') {
+                            offset = 0.45;
+                        } else if (obj.type === 'stone_slab') {
+                            offset = 0.225;
+                        }
+                        obj.mesh.position.y = obj.pos.y + offset;
+                    }
+                }
+            });
         }
 
         // Rematches
@@ -6123,12 +8057,17 @@ export function initNeonBruiser(): Cleanup {
             updateMinecraftStatsUI();
             hotbarItems = new Array(9).fill(null);
             hotbarCounts = new Array(9).fill(0);
+            hotbarDurability = new Array(9).fill(null);
             hotbarItems[0] = 'wooden_axe';
             hotbarCounts[0] = 1;
+            hotbarDurability[0] = 60;
             hotbarItems[1] = 'crafting_bench';
             hotbarCounts[1] = 1;
+            hotbarItems[2] = 'boat';
+            hotbarCounts[2] = 1;
             inventoryItems = new Array(27).fill(null);
             inventoryCounts = new Array(27).fill(0);
+            inventoryDurability = new Array(27).fill(null);
             armorItems = {
                 helmet: null,
                 chestplate: null,
@@ -6146,7 +8085,9 @@ export function initNeonBruiser(): Cleanup {
             selectedHotbarIndex = 0;
             clearPlacedObjects();
             worldCorals = [];
+            worldStones = [];
             minedCoralCoords = new Set();
+            minedDesertHoles = new Set();
             activeChest = null;
             chestUIOpen = false;
             updateHotbarUI();
@@ -6236,7 +8177,7 @@ export function initNeonBruiser(): Cleanup {
             inTurret = false;
             turretOccupant = null;
             if (turretHeadGroup) turretHeadGroup.rotation.set(0, 0, 0);
-            clearZombies();
+            clearZombies(true);
             ridingCube = null;
             spawnQuantumCubes();
             hasSpawnedZombiesThisNight = false;
@@ -6252,6 +8193,7 @@ export function initNeonBruiser(): Cleanup {
                 }
                 spawnVillagers(villagerData);
                 spawnInitialAnimals();
+                spawnCrawlingTrees();
                 
                 if (isConnected) {
                     sendNetworkMessage({
@@ -6284,6 +8226,7 @@ export function initNeonBruiser(): Cleanup {
 
         function resetGameScene() {
             timeOffset = 30000 - (Date.now() % (CYCLE_DURATION * 1000));
+            respawnPoint = null;
             myHealth = 100;
             oppHealth = 100;
             updateHud();
@@ -6292,12 +8235,17 @@ export function initNeonBruiser(): Cleanup {
             updateMinecraftStatsUI();
             hotbarItems = new Array(9).fill(null);
             hotbarCounts = new Array(9).fill(0);
+            hotbarDurability = new Array(9).fill(null);
             hotbarItems[0] = 'wooden_axe';
             hotbarCounts[0] = 1;
+            hotbarDurability[0] = 60;
             hotbarItems[1] = 'crafting_bench';
             hotbarCounts[1] = 1;
+            hotbarItems[2] = 'boat';
+            hotbarCounts[2] = 1;
             inventoryItems = new Array(27).fill(null);
             inventoryCounts = new Array(27).fill(0);
+            inventoryDurability = new Array(27).fill(null);
             selectedHotbarIndex = 0;
             clearPlacedObjects();
             updateHotbarUI();
@@ -6305,6 +8253,47 @@ export function initNeonBruiser(): Cleanup {
             clearAnimals();
             clearDroppedFoods();
             if (typeof resetWorldTrees === 'function') resetWorldTrees();
+            if (typeof resetWorldCorals === 'function') resetWorldCorals();
+            if (typeof resetWorldStones === 'function') resetWorldStones();
+
+            // Reset dimension and cave states
+            playerInCave = false;
+            opponentInCave = false;
+
+            // Unload all chunks from scene to start fresh
+            for (const chunk of loadedChunks.values()) {
+                if (chunk.terrainMesh) scene.remove(chunk.terrainMesh);
+                if (chunk.ceilMesh) scene.remove(chunk.ceilMesh);
+                if (chunk.waterMesh) scene.remove(chunk.waterMesh);
+                if (chunk.entities) {
+                    chunk.entities.forEach(ent => scene.remove(ent));
+                }
+            }
+            loadedChunks.clear();
+
+            caveEntrances.forEach(ent => scene.remove(ent.mesh));
+            caveEntrances.length = 0;
+            caveExits.forEach(ex => scene.remove(ex.mesh));
+            caveExits.length = 0;
+
+            // Clear bees
+            bees.forEach(b => scene.remove(b.mesh));
+            bees.length = 0;
+            clientBees.forEach(mesh => scene.remove(mesh));
+            clientBees.clear();
+
+            // Clear quantum cubes
+            clearQuantumCubes();
+            ridingCube = null;
+
+            // Reset stone/coral/recipes sets
+            minedStoneCoords = new Set();
+            choppedTreeCoords = new Set();
+            minedCoralCoords = new Set();
+            minedDesertHoles = new Set();
+            obtainedItems.clear();
+            obtainedItems.add('wooden_axe');
+            obtainedItems.add('crafting_bench');
 
             rematchRequestSent = false;
             rematchRequestReceived = false;
@@ -6312,12 +8301,16 @@ export function initNeonBruiser(): Cleanup {
             elRematchStatus.innerText = "";
             activeWeapon = 'fists';
             updateWeaponUI();
-            
-            // Reset Turret / Zombie states
+
+            if (elDeathScreen) {
+                elDeathScreen.style.display = 'none';
+            }
+
+                       // Reset Turret / Zombie states
             inTurret = false;
             turretOccupant = null;
             if (turretHeadGroup) turretHeadGroup.rotation.set(0, 0, 0);
-            clearZombies();
+            clearZombies(true);
             hasSpawnedZombiesThisNight = false;
             
             // Reset local/opponent invisibility
@@ -6329,7 +8322,7 @@ export function initNeonBruiser(): Cleanup {
             
             const oppCard = document.querySelector('.opponent-card');
             if (oppCard) oppCard.style.display = isConnected ? 'flex' : 'none';
-
+ 
             const villagerData = [];
             const villageCenter = { x: -78, z: -78 };
             for (let i = 0; i < 5; i++) {
@@ -6340,6 +8333,9 @@ export function initNeonBruiser(): Cleanup {
             }
             spawnVillagers(villagerData);
             spawnInitialAnimals();
+            if (isHost) {
+                spawnCrawlingTrees();
+            }
         }
 
         // --- NETWORKING DATA SYNC ---
@@ -6361,6 +8357,12 @@ export function initNeonBruiser(): Cleanup {
 
             switch(msg.type) {
                 case 'init-map':
+                    // Clear guest's state
+                    clearPlacedObjects();
+                    minedStoneCoords.clear();
+                    choppedTreeCoords.clear();
+                    minedCoralCoords.clear();
+                    minedDesertHoles.clear();
                     
                     // Spawn synced turret
                     if (msg.turretX !== undefined && msg.turretZ !== undefined) {
@@ -6370,6 +8372,138 @@ export function initNeonBruiser(): Cleanup {
                     // Spawn synced villagers
                     if (msg.villagers) {
                         spawnVillagers(msg.villagers);
+                    }
+                    
+                    if (msg.weather) {
+                        setWeather(msg.weather);
+                    }
+                    
+                    if (msg.timeOffset !== undefined) {
+                        timeOffset = msg.timeOffset;
+                    }
+                    
+                    // Spawn placed objects
+                    if (msg.placedObjects) {
+                        msg.placedObjects.forEach(obj => {
+                            const pos = new THREE.Vector3(obj.x, obj.y, obj.z);
+                            const spawned = spawnPlacedObject(obj.type, pos, false);
+                            if (spawned) {
+                                spawned.isOpen = !!obj.isOpen;
+                                spawned.initialRotationY = typeof obj.initialRotationY === 'number' ? obj.initialRotationY : (spawned.mesh ? spawned.mesh.rotation.y : 0);
+                                spawned.inCave = obj.inCave !== undefined ? isDimensionCave(obj.inCave) : false;
+                                if (spawned.mesh) {
+                                    spawned.mesh.rotation.y = spawned.initialRotationY + (spawned.isOpen ? Math.PI / 2 : 0);
+                                    spawned.mesh.visible = (isDimensionCave(spawned.inCave) === isDimensionCave(playerInCave));
+                                }
+                                if (obj.furnaceState) {
+                                    spawned.furnaceState = obj.furnaceState;
+                                }
+                                if (obj.chestInventoryItems) {
+                                    spawned.chestInventoryItems = obj.chestInventoryItems;
+                                    spawned.chestInventoryCounts = obj.chestInventoryCounts;
+                                    spawned.chestInventoryDurability = obj.chestInventoryDurability || new Array(27).fill(null);
+                                    for (let i = 0; i < 27; i++) {
+                                        if (spawned.chestInventoryItems[i] && isTool(spawned.chestInventoryItems[i]) && (spawned.chestInventoryDurability[i] === null || spawned.chestInventoryDurability[i] === undefined)) {
+                                            spawned.chestInventoryDurability[i] = getMaxDurability(spawned.chestInventoryItems[i]);
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    }
+                    
+                    // Sync terrain alterations
+                    if (msg.minedStoneCoords) {
+                        msg.minedStoneCoords.forEach(coord => {
+                            minedStoneCoords.add(coord);
+                            const parts = coord.split(',');
+                            if (parts.length === 2) {
+                                updateTerrainMeshNear(parseFloat(parts[0]), parseFloat(parts[1]));
+                            }
+                        });
+                    }
+                    if (msg.minedDesertHoles) {
+                        msg.minedDesertHoles.forEach(coord => {
+                            minedDesertHoles.add(coord);
+                            const parts = coord.split(',');
+                            if (parts.length >= 2) {
+                                updateTerrainMeshNear(parseFloat(parts[0]), parseFloat(parts[1]));
+                            }
+                        });
+                    }
+                    if (msg.choppedTreeCoords) {
+                        msg.choppedTreeCoords.forEach(coord => {
+                            choppedTreeCoords.add(coord);
+                            const parts = coord.split(',');
+                            if (parts.length === 2) {
+                                const tx = parseFloat(parts[0]);
+                                const tz = parseFloat(parts[1]);
+                                const t = worldTrees.find(x => Math.abs(x.x - tx) < 0.2 && Math.abs(x.z - tz) < 0.2);
+                                if (t) {
+                                    t.isChopped = true;
+                                    t.logsLeft = 0;
+                                    t.group.visible = false;
+                                }
+                            }
+                        });
+                    }
+                    if (msg.minedCoralCoords) {
+                        msg.minedCoralCoords.forEach(coord => {
+                            minedCoralCoords.add(coord);
+                            const parts = coord.split(',');
+                            if (parts.length === 2) {
+                                const cx = parseFloat(parts[0]);
+                                const cz = parseFloat(parts[1]);
+                                const c = worldCorals.find(x => Math.abs(x.x - cx) < 0.2 && Math.abs(x.z - cz) < 0.2);
+                                if (c) {
+                                    c.mesh.visible = false;
+                                }
+                            }
+                        });
+                    }
+                    
+                    // Refresh world stone and coral visibility
+                    if (typeof resetWorldStones === 'function') resetWorldStones();
+                    if (typeof resetWorldCorals === 'function') resetWorldCorals();
+                    
+                    // Hide any mined stones from worldStones
+                    worldStones.forEach(stone => {
+                        const coordKey = `${stone.x.toFixed(1)},${stone.z.toFixed(1)}`;
+                        if (minedStoneCoords.has(coordKey)) {
+                            stone.mesh.visible = false;
+                        }
+                    });
+                    
+                    // Trigger character appearance request
+                    sendNetworkMessage({
+                        type: 'appearance',
+                        name: myAppearance.name || 'player',
+                        skin: myAppearance.skin,
+                        hair: myAppearance.hair,
+                        eye: myAppearance.eye,
+                        shirt: myAppearance.shirt,
+                        pants: myAppearance.pants
+                    });
+                    
+                    // Safe spawn point for client player
+                    const clientStartX = 60;
+                    const clientStartZ = 20;
+                    const clientStartY = getTerrainHeight(clientStartX, clientStartZ) + 1.6;
+                    camera.position.set(clientStartX, clientStartY, clientStartZ);
+                    camera.rotation.set(0, 0, 0);
+                    velocity.set(0, 0, 0);
+
+                    addChatMessage("Joined game successfully! World state synced.", "system");
+                    break;
+                case 'weather-sync':
+                    if (msg.weather) {
+                        setWeather(msg.weather);
+                    }
+                    break;
+                case 'tree-burn-start':
+                    const bTree = worldTrees.find(t => Math.abs(t.x - msg.x) < 0.2 && Math.abs(t.z - msg.z) < 0.2);
+                    if (bTree) {
+                        startTreeBurning(bTree);
                     }
                     break;
                 case 'quantum-cubes-sync':
@@ -6428,9 +8562,42 @@ export function initNeonBruiser(): Cleanup {
                     break;
                 case 'place-block':
                     spawnPlacedObject(msg.blockType, new THREE.Vector3(msg.x, msg.y, msg.z), false);
+                    const spawned = placedObjects[placedObjects.length - 1];
+                    if (spawned) {
+                        spawned.inCave = msg.inCave !== undefined ? isDimensionCave(msg.inCave) : isDimensionCave(opponentInCave);
+                        spawned.mesh.visible = (isDimensionCave(spawned.inCave) === isDimensionCave(playerInCave));
+                    }
                     break;
                 case 'break-block':
                     removePlacedBlockAt(msg.x, msg.y, msg.z);
+                    break;
+                case 'mine-stone':
+                    const s = worldStones.find(x => Math.abs(x.x - msg.x) < 0.2 && Math.abs(x.z - msg.z) < 0.2);
+                    if (s) {
+                        mineNaturalStone(s, false);
+                    }
+                    break;
+                case 'mine-coral':
+                    const c = worldCorals.find(x => Math.abs(x.x - msg.x) < 0.2 && Math.abs(x.z - msg.z) < 0.2);
+                    if (c) {
+                        mineNaturalCoral(c, false);
+                    }
+                    break;
+                case 'chop-tree':
+                    const t = worldTrees.find(x => Math.abs(x.x - msg.x) < 0.2 && Math.abs(x.z - msg.z) < 0.2);
+                    if (t) {
+                        chopTreeDown(t, false);
+                    }
+                    break;
+                case 'harvest-log':
+                    const tLog = worldTrees.find(x => Math.abs(x.x - msg.x) < 0.2 && Math.abs(x.z - msg.z) < 0.2);
+                    if (tLog) {
+                        harvestLog(tLog, false);
+                    }
+                    break;
+                case 'dig-desert-hole':
+                    addMinedDesertHole(msg.x, msg.z, false);
+                    updateTerrainMeshNear(msg.x, msg.z);
                     break;
                 case 'health-sync':
                     if (msg.health < oppHealth) {
@@ -6444,6 +8611,7 @@ export function initNeonBruiser(): Cleanup {
                     break;
                 case 'appearance':
                     opponentAppearance = {
+                        name: msg.name || 'opponent',
                         skin: msg.skin,
                         hair: msg.hair,
                         eye: msg.eye,
@@ -6451,6 +8619,7 @@ export function initNeonBruiser(): Cleanup {
                         pants: msg.pants
                     };
                     rebuildOpponentMesh();
+                    updateHud();
                     break;
                 case 'trashed':
                     oppHealth = 0;
@@ -6508,17 +8677,23 @@ export function initNeonBruiser(): Cleanup {
                         activeIds.add(zd.id);
                         let mesh = clientZombies.get(zd.id);
                         if (!mesh) {
-                            mesh = zd.type === 'creeper' ? createCreeperMesh() : (zd.type === 'skeleton' ? createSkeletonMesh() : createZombieMesh());
+                            mesh = zd.type === 'creeper' ? createCreeperMesh() : (zd.type === 'skeleton' ? createSkeletonMesh() : (zd.type === 'crawling_tree' ? createCrawlingTreeMesh() : createZombieMesh()));
                             mesh.zombieType = zd.type || 'zombie';
                             scene.add(mesh);
                             clientZombies.set(zd.id, mesh);
                         }
                         
-                        mesh.inCave = zd.inCave || false;
-                        mesh.visible = (!!mesh.inCave === playerInCave);
+                        mesh.inCave = zd.inCave !== undefined ? isDimensionCave(zd.inCave) : false;
+                        mesh.visible = (isDimensionCave(mesh.inCave) === isDimensionCave(playerInCave));
                         
                         mesh.position.set(zd.x, zd.y, zd.z);
                         mesh.rotation.y = zd.ry;
+                        
+                        if (mesh.zombieType === 'crawling_tree') {
+                            mesh.crawlingTreeState = zd.crawlingTreeState || 'standing';
+                            mesh.attackAnimProgress = zd.attackAnimProgress || 0;
+                            return;
+                        }
                         
                         if (zd.isDead) {
                             const slumpProgress = Math.min(1.0, zd.deathTime / 0.8);
@@ -6661,12 +8836,19 @@ export function initNeonBruiser(): Cleanup {
                         const z = zombies.find(x => x.id === msg.id);
                         if (z && !z.isDead) {
                             z.health = Math.max(0, z.health - msg.damage);
+                            if (z.type === 'crawling_tree' && z.state === 'standing') {
+                                z.state = 'rising';
+                                z.stateTime = 0;
+                                spawnDirtParticles(z.mesh.position, 12);
+                                AudioSynth.playClack(z.mesh.position);
+                            }
                             z.kx = msg.kx;
                             z.kz = msg.kz;
                             flashZombieRed(z.mesh);
                             if (z.health <= 0) {
                                 z.isDead = true;
                                 z.deathTime = 0;
+                                handleZombieDeathDrops(z);
                             }
                         }
                     }
@@ -6700,10 +8882,15 @@ export function initNeonBruiser(): Cleanup {
                     break;
                 case 'time-sync':
                     timeOffset = msg.offset;
-                    addChatMessage("Opponent set time to night.", "system");
+                    const syncCycleTime = ((Date.now() + timeOffset) % (CYCLE_DURATION * 1000)) / 1000;
+                    const isNightNow = (syncCycleTime >= 540 || syncCycleTime < 30);
+                    addChatMessage(`Opponent set time to ${isNightNow ? 'night' : 'day'}.`, "system");
                     break;
                 case 'creeper-explode':
                     createExplosionEffect(msg.x, msg.y, msg.z, 4.5, 10, false);
+                    break;
+                case 'tnt-explode':
+                    createExplosionEffect(msg.x, msg.y, msg.z, 12.0, 60.0, false);
                     break;
                 case 'damage-quantum-cube':
                     if (isHost) {
@@ -6746,6 +8933,36 @@ export function initNeonBruiser(): Cleanup {
             }
         }
 
+        function sendMapToPeer(turretX, turretZ, villagerData) {
+            if (!isConnected) return;
+            sendNetworkMessage({
+                type: 'init-map',
+                trashCans: trashCanCoords,
+                turretX: turretX,
+                turretZ: turretZ,
+                villagers: villagerData,
+                weather: currentWeather,
+                timeOffset: timeOffset,
+                placedObjects: placedObjects.map(obj => ({
+                    type: obj.type,
+                    x: obj.pos.x,
+                    y: obj.pos.y,
+                    z: obj.pos.z,
+                    isOpen: !!obj.isOpen,
+                    initialRotationY: obj.initialRotationY,
+                    furnaceState: obj.furnaceState || null,
+                    chestInventoryItems: obj.chestInventoryItems || null,
+                    chestInventoryCounts: obj.chestInventoryCounts || null,
+                    chestInventoryDurability: obj.chestInventoryDurability || null,
+                    inCave: isDimensionCave(obj.inCave)
+                })),
+                minedStoneCoords: Array.from(minedStoneCoords),
+                choppedTreeCoords: Array.from(choppedTreeCoords),
+                minedCoralCoords: Array.from(minedCoralCoords),
+                minedDesertHoles: Array.from(minedDesertHoles)
+            });
+        }
+
         // Start Arena
         function startGame() {
             elLobby.style.display = 'none';
@@ -6777,13 +8994,7 @@ export function initNeonBruiser(): Cleanup {
                     }
                     
                     setTimeout(() => {
-                        sendNetworkMessage({
-                            type: 'init-map',
-                            trashCans: trashCanCoords,
-                            turretX: turretX,
-                            turretZ: turretZ,
-                            villagers: villagerData
-                        });
+                        sendMapToPeer(turretX, turretZ, villagerData);
                     }, 400);
                     
                     spawnTurretMesh(turretX, turretZ);
@@ -6794,7 +9005,22 @@ export function initNeonBruiser(): Cleanup {
                     animate();
                 }
             } else {
-                resetMatch();
+                if (isHost && isConnected) {
+                    // Host is already in-game, sync existing map state with guest
+                    let turretX = -78;
+                    let turretZ = -78;
+                    const existingTurret = scene.getObjectByName('turretGroup');
+                    if (existingTurret) {
+                        turretX = existingTurret.position.x;
+                        turretZ = existingTurret.position.z;
+                    }
+                    const villagerData = villagers.map(v => ({ id: v.id, x: v.mesh.position.x, z: v.mesh.position.z }));
+                    setTimeout(() => {
+                        sendMapToPeer(turretX, turretZ, villagerData);
+                    }, 400);
+                } else {
+                    resetMatch();
+                }
             }
             
             const oppCard = document.querySelector('.opponent-card');
@@ -6802,7 +9028,7 @@ export function initNeonBruiser(): Cleanup {
 
             updateHud();
 
-            addChatMessage("Press [T] to chat. Type /night to set to night.", "system");
+            addChatMessage("Press [T] to chat. Type /day or /night to set the time.", "system");
             requestPointerLock();
 
             // Show canvas capture prompt if auto pointer lock was denied
@@ -6849,6 +9075,11 @@ export function initNeonBruiser(): Cleanup {
             const delta = clock.getDelta();
             const time = clock.getElapsedTime();
 
+            // Death check: if HP reaches 0 or below, drop all items and die
+            if (gameActive && myHealth <= 0 && (!elDeathScreen || elDeathScreen.style.display !== 'flex')) {
+                declareLoser("You ran out of health!");
+            }
+
             // Animate portals
             if (typeof portalVortices !== 'undefined') {
                 portalVortices.forEach(vortex => {
@@ -6860,6 +9091,68 @@ export function initNeonBruiser(): Cleanup {
 
             // Run Day-Night Cycle Updates
             updateDayNightCycle();
+            
+            // --- WEATHER UPDATES ---
+            if (gameActive) {
+                if (isHost) {
+                    weatherTimer -= delta;
+                    if (weatherTimer <= 0) {
+                        const r = Math.random();
+                        let nextWeather = 'clear';
+                        if (r < 0.25) {
+                            nextWeather = 'rain';
+                        } else if (r < 0.35) {
+                            nextWeather = 'thunder';
+                        }
+                        setWeather(nextWeather);
+                        weatherTimer = 60.0 + Math.random() * 90.0;
+                        if (isConnected) {
+                            sendNetworkMessage({ type: 'weather-sync', weather: currentWeather });
+                        }
+                    }
+                }
+
+                // Update rain particles positions relative to camera
+                if (rainParticles && rainParticles.visible) {
+                    rainParticles.position.set(camera.position.x, camera.position.y, camera.position.z);
+                    const posAttr = rainParticles.geometry.attributes.position;
+                    const posArray = posAttr.array;
+                    const vArray = rainParticles.userData.velocities;
+                    for (let i = 0; i < posArray.length / 3; i++) {
+                        posArray[i * 3 + 1] -= vArray[i] * delta; // Fall down
+                        
+                        // If it falls below a threshold relative to camera, reset to top
+                        if (posArray[i * 3 + 1] < -15) {
+                            posArray[i * 3] = (Math.random() - 0.5) * 50;
+                            posArray[i * 3 + 1] = 20 + Math.random() * 15;
+                            posArray[i * 3 + 2] = (Math.random() - 0.5) * 50;
+                        }
+                    }
+                    posAttr.needsUpdate = true;
+                }
+
+                // Thunder lightning updates
+                if (currentWeather === 'thunder' && !playerInCave) {
+                    lightningFlashTimer -= delta;
+                    if (lightningFlashTimer <= 0) {
+                        isLightningFlashing = true;
+                        lightningFlashDuration = 0.15 + Math.random() * 0.25;
+                        lightningFlashTimer = 5.0 + Math.random() * 12.0; // Next flash in 5-17s
+                        
+                        // Play synthesized thunder sound!
+                        AudioSynth.playThunder();
+                    }
+                    
+                    if (isLightningFlashing) {
+                        lightningFlashDuration -= delta;
+                        if (lightningFlashDuration <= 0) {
+                            isLightningFlashing = false;
+                        }
+                    }
+                } else {
+                    isLightningFlashing = false;
+                }
+            }
             
             // Update Quantum Cubes
             updateQuantumCubes(delta);
@@ -6874,6 +9167,12 @@ export function initNeonBruiser(): Cleanup {
             if (isHost && gameActive) {
                 updateZombies(delta);
                 updateBees(delta);
+            } else if (!isHost && gameActive) {
+                clientZombies.forEach((mesh) => {
+                    if (mesh.zombieType === 'crawling_tree') {
+                        animateCrawlingTreeMesh(mesh, mesh.crawlingTreeState || 'standing', mesh.attackAnimProgress || 0, delta, Date.now());
+                    }
+                });
             }
 
             // Periodic Ambient Sounds (clacking, moaning, hrrming, buzzing)
@@ -6953,8 +9252,10 @@ export function initNeonBruiser(): Cleanup {
                 updateDroppedFoods(delta);
                 updateHunger(delta);
                 updateFurnaces(delta);
+                updateCampfires(delta);
                 updateBlockCracksDecay(delta);
                 updateFishing(delta);
+                updateFloatingBlocks(delta);
             }
 
             if (isConnected) {
@@ -6969,6 +9270,15 @@ export function initNeonBruiser(): Cleanup {
                     spawnFireParticles(opponentGroup.position, 1);
                 }
             }
+
+            // Spawn particles from placed fire blocks
+            placedObjects.forEach(obj => {
+                if (obj.type === 'fire') {
+                    if (Math.random() < 0.15) {
+                        spawnFireParticles(obj.pos, 1);
+                    }
+                }
+            });
 
             updateFireParticles(delta);
             updateEatingParticles(delta);
@@ -7328,22 +9638,45 @@ export function initNeonBruiser(): Cleanup {
                 }
             }
 
-            // Apply lighting variables
+            // Apply weather-based modifiers to color/light
+            let finalSunIntensity = sunIntensity;
+            let finalMoonIntensity = moonIntensity;
+            let finalAmbientIntensity = (cycleTime < 540) ? 0.4 : 0.55;
+
+            if (!playerInCave) {
+                if (currentWeather === 'rain') {
+                    // Blend sky color to gray
+                    skyColor.lerp(new THREE.Color(0x3a3d45), 0.7);
+                    finalSunIntensity *= 0.45;
+                    finalMoonIntensity *= 0.45;
+                    finalAmbientIntensity *= 0.6;
+                } else if (currentWeather === 'thunder') {
+                    if (isLightningFlashing) {
+                        skyColor.setHex(0xffffff);
+                        finalSunIntensity = 2.0;
+                        finalMoonIntensity = 2.0;
+                        finalAmbientIntensity = 1.8;
+                    } else {
+                        // Blend sky color to dark gray
+                        skyColor.lerp(new THREE.Color(0x1e2026), 0.85);
+                        finalSunIntensity *= 0.2;
+                        finalMoonIntensity *= 0.2;
+                        finalAmbientIntensity *= 0.35;
+                    }
+                }
+            }
+
             skyMat.color.copy(skyColor);
             scene.fog.color.copy(skyColor);
             renderer.setClearColor(skyColor);
 
-            // Also center sky dome and starfield on player in overworld
+            // Center sky dome and starfield on player
             if (skyMesh) skyMesh.position.copy(camera.position);
             if (starField) starField.position.copy(camera.position);
 
-            // Set ambient light intensity dynamically to prevent night pitch-black
+            // Set ambient light intensity dynamically
             if (ambientLight) {
-                if (cycleTime < 540) {
-                    ambientLight.intensity = 0.4; // Daytime ambient
-                } else {
-                    ambientLight.intensity = 0.55; // Nighttime ambient (soft indigo moonlight fill) - Brightened
-                }
+                ambientLight.intensity = finalAmbientIntensity;
             }
 
             // Position celestial body spheres relative to player
@@ -7351,7 +9684,7 @@ export function initNeonBruiser(): Cleanup {
             const pz = camera ? camera.position.z : 0;
 
             if (cycleTime < 540) {
-                sunLight.intensity = sunIntensity;
+                sunLight.intensity = finalSunIntensity;
                 sunLight.position.set(px + Math.cos(sunAngle) * 150, Math.sin(sunAngle) * 150, pz);
                 sunSphere.position.copy(sunLight.position);
                 sunSphere.visible = true;
@@ -7362,7 +9695,7 @@ export function initNeonBruiser(): Cleanup {
                 sunLight.intensity = 0;
                 sunSphere.visible = false;
                 
-                moonLight.intensity = moonIntensity;
+                moonLight.intensity = finalMoonIntensity;
                 moonLight.position.set(px + Math.cos(moonAngle) * 150, Math.sin(moonAngle) * 150, pz);
                 moonSphere.position.copy(moonLight.position);
                 moonSphere.visible = true;
@@ -7594,14 +9927,14 @@ export function initNeonBruiser(): Cleanup {
             mapCtx.fillText("DESERT DUNES", mapX(350), mapZ(-350));
 
             // 3. Cherry Island (center -150, -350, radius 180)
-            mapCtx.fillStyle = 'rgba(255, 175, 190, 0.22)';
+            mapCtx.fillStyle = 'rgba(100, 255, 130, 0.22)';
             mapCtx.beginPath();
             mapCtx.arc(mapX(-150), mapZ(-350), scaleR(180), 0, 2 * Math.PI);
             mapCtx.fill();
-            mapCtx.strokeStyle = 'rgba(255, 195, 210, 0.3)';
+            mapCtx.strokeStyle = 'rgba(100, 255, 130, 0.3)';
             mapCtx.stroke();
 
-            mapCtx.fillStyle = 'rgba(255, 175, 190, 0.55)';
+            mapCtx.fillStyle = 'rgba(100, 255, 130, 0.65)';
             mapCtx.font = '900 11px Orbitron';
             mapCtx.textAlign = 'center';
             mapCtx.fillText("CHERRY ISLE", mapX(-150), mapZ(-350));
@@ -7625,15 +9958,15 @@ export function initNeonBruiser(): Cleanup {
             mapCtx.textAlign = 'center';
             mapCtx.fillText("MOUNTAIN PEAK", mapX(250), mapZ(350));
 
-            // 5. Second Village Island (center -350, 250, radius 180) - Savanna
-            mapCtx.fillStyle = 'rgba(180, 160, 90, 0.22)';
+            // 5. Second Village Island (center -350, 250, radius 180) - Green Village
+            mapCtx.fillStyle = 'rgba(100, 255, 130, 0.22)';
             mapCtx.beginPath();
             mapCtx.arc(mapX(-350), mapZ(250), scaleR(180), 0, 2 * Math.PI);
             mapCtx.fill();
-            mapCtx.strokeStyle = 'rgba(200, 180, 100, 0.3)';
+            mapCtx.strokeStyle = 'rgba(100, 255, 130, 0.3)';
             mapCtx.stroke();
 
-            mapCtx.fillStyle = 'rgba(210, 175, 90, 0.65)';
+            mapCtx.fillStyle = 'rgba(100, 255, 130, 0.65)';
             mapCtx.font = '900 11px Orbitron';
             mapCtx.textAlign = 'center';
             mapCtx.fillText("SAVANNA VILLAGE", mapX(-350), mapZ(250));
@@ -7699,18 +10032,23 @@ export function initNeonBruiser(): Cleanup {
             // Draw Mobs (zombies, creepers, skeletons as green/red dots)
             if (isHost) {
                 zombies.forEach(z => {
+                    if (z.isDead) return;
+                    if (z.type === 'crawling_tree' && z.state === 'standing') return;
+                    
                     const zx = mapX(z.mesh.position.x);
                     const zz = mapZ(z.mesh.position.z);
-                    mapCtx.fillStyle = z.type === 'creeper' ? '#ff3300' : (z.type === 'skeleton' ? '#e6e6e6' : '#39ff14');
+                    mapCtx.fillStyle = z.type === 'creeper' ? '#ff3300' : (z.type === 'skeleton' ? '#e6e6e6' : (z.type === 'crawling_tree' ? '#2d5a27' : '#39ff14'));
                     mapCtx.beginPath();
                     mapCtx.arc(zx, zz, 4.5, 0, 2 * Math.PI);
                     mapCtx.fill();
                 });
             } else {
                 clientZombies.forEach(mesh => {
+                    if (mesh.zombieType === 'crawling_tree' && mesh.crawlingTreeState === 'standing') return;
+                    
                     const zx = mapX(mesh.position.x);
                     const zz = mapZ(mesh.position.z);
-                    mapCtx.fillStyle = mesh.zombieType === 'creeper' ? '#ff3300' : (mesh.zombieType === 'skeleton' ? '#e6e6e6' : '#39ff14');
+                    mapCtx.fillStyle = mesh.zombieType === 'creeper' ? '#ff3300' : (mesh.zombieType === 'skeleton' ? '#e6e6e6' : (mesh.zombieType === 'crawling_tree' ? '#2d5a27' : '#39ff14'));
                     mapCtx.beginPath();
                     mapCtx.arc(zx, zz, 4.5, 0, 2 * Math.PI);
                     mapCtx.fill();
@@ -7836,8 +10174,8 @@ export function initNeonBruiser(): Cleanup {
         // Physics WASD movement updates
         function updatePlayerPhysics(delta) {
             const inQuantum = (camera.position.x > 1400);
-            // Lock position if in turret, bush, or riding a quantum cube
-            if (inTurret || inBush || (typeof ridingCube !== 'undefined' && ridingCube)) {
+            // Lock position if in turret, bush, riding a quantum cube, or riding a horse
+            if (inTurret || inBush || (typeof ridingCube !== 'undefined' && ridingCube) || ridingHorse) {
                 if (inBush) {
                     const bush = bushes.find(b => b.id === activeBushId);
                     if (bush) {
@@ -7848,6 +10186,10 @@ export function initNeonBruiser(): Cleanup {
                 } else if (ridingCube) {
                     // Position camera 3.2m above cube center (1.6m cube height + 1.6m eye level) so player stands ON it
                     camera.position.set(ridingCube.mesh.position.x, ridingCube.mesh.position.y + 3.2, ridingCube.mesh.position.z);
+                    velocity.set(0, 0, 0);
+                    knockbackVel.set(0, 0, 0);
+                } else if (ridingHorse && activeHorse) {
+                    camera.position.set(activeHorse.mesh.position.x, activeHorse.mesh.position.y + 1.8, activeHorse.mesh.position.z);
                     velocity.set(0, 0, 0);
                     knockbackVel.set(0, 0, 0);
                 }
@@ -7863,7 +10205,9 @@ export function initNeonBruiser(): Cleanup {
             if (playerInCave) {
                 isPlayerInWater = false;
             } else {
-                isPlayerInWater = !inQuantum && (initialPDistToLake < LAKE_RADIUS || initialTerrainY <= WATER_Y) && camera.position.y < WATER_Y + 1.8;
+                const distToDesert = Math.sqrt(Math.pow(camera.position.x - 350, 2) + Math.pow(camera.position.z + 350, 2));
+                const inDesert = distToDesert < 180;
+                isPlayerInWater = !inQuantum && !inDesert && (initialPDistToLake < LAKE_RADIUS || initialTerrainY <= WATER_Y) && camera.position.y < WATER_Y + 1.8;
             }
 
             // Apply friction decelerations
@@ -7907,8 +10251,12 @@ export function initNeonBruiser(): Cleanup {
                     velocity.y = Math.min(3.5, velocity.y + 15.0 * delta);
                 }
             } else {
-                // Normal gravity
-                velocity.y -= 9.8 * 2.2 * delta;
+                // Gravity depends on physics mode
+                let gravityAcc = 9.8 * 2.2;
+                if (physicsMode === 'moon') {
+                    gravityAcc = 9.8 * 0.55;
+                }
+                velocity.y -= gravityAcc * delta;
             }
 
             direction.z = Number(moveForces.forward) - Number(moveForces.backward);
@@ -7927,13 +10275,58 @@ export function initNeonBruiser(): Cleanup {
             moveRight(-totalVX * delta);
             moveForward(-totalVZ * delta);
 
+            // Constraint for deep desert holes (cannot get out if depth >= 3 digs unless towered)
+            const distToDesert = Math.sqrt(Math.pow(camera.position.x - 350, 2) + Math.pow(camera.position.z + 350, 2));
+            if (!playerInCave && distToDesert < 180) {
+                const px = camera.position.x;
+                const pz = camera.position.z;
+                
+                let nearestHole = null;
+                let nearestDist = Infinity;
+                
+                if (typeof minedDesertHoles !== 'undefined' && minedDesertHoles && minedDesertHoles.size > 0) {
+                    minedDesertHoles.forEach(coordKey => {
+                        const parts = coordKey.split(',');
+                        if (parts.length === 3) {
+                            const hx = parseFloat(parts[0]);
+                            const hz = parseFloat(parts[1]);
+                            const depth = parseInt(parts[2]);
+                            if (depth >= 3) {
+                                const dist = Math.sqrt(Math.pow(px - hx, 2) + Math.pow(pz - hz, 2));
+                                if (dist < nearestDist) {
+                                    nearestDist = dist;
+                                    nearestHole = { x: hx, z: hz, depth: depth };
+                                }
+                            }
+                        }
+                    });
+                }
+                
+                if (nearestHole && nearestDist < 1.8) {
+                    const unminedY = getTerrainHeight(px, pz, false, true); // ignoreMinedHoles = true
+                    const feetY = camera.position.y - 1.6;
+                    const remainingDepth = unminedY - feetY;
+                    
+                    if (remainingDepth > 2.2) {
+                        // Player is inside a deep hole. Prevent escape horizontally
+                        if (nearestDist > 1.0) {
+                            const angle = Math.atan2(pz - nearestHole.z, px - nearestHole.x);
+                            camera.position.x = nearestHole.x + Math.cos(angle) * 1.0;
+                            camera.position.z = nearestHole.z + Math.sin(angle) * 1.0;
+                            velocity.x = 0;
+                            velocity.z = 0;
+                        }
+                    }
+                }
+            }
+
             let groundedThisFrame = nearLadder;
             let stepUpY = -Infinity;
             let shouldStepUp = false;
 
             // Check collision with placed blocks
             placedObjects.forEach(obj => {
-                if (obj.type === 'ladder') return; // Ladders do not block player movement horizontally
+                if (obj.type === 'ladder' || obj.type === 'fire') return; // Ladders and fire do not block player movement horizontally
                 if (obj.type === 'door' && obj.isOpen) return; // Open doors do not block player
 
                 const px = camera.position.x;
@@ -7953,7 +10346,7 @@ export function initNeonBruiser(): Cleanup {
                 
                 const py = camera.position.y - 1.6;
                 const oy = obj.pos.y;
-                const height = (obj.type === 'crafting_bench') ? 1.0 : (obj.type === 'door' ? 1.8 : (obj.type === 'stone_slab' ? 0.45 : 0.9));
+                const height = (obj.type === 'crafting_bench') ? 1.0 : (obj.type === 'door' ? 1.8 : ((obj.type === 'stone_slab' || obj.type === 'bed') ? 0.45 : 0.9));
                 
                 if (dx < limitX && dz < limitZ && py < oy + height && py + 1.8 > oy) {
                     const stepHeight = (oy + height) - py;
@@ -7964,7 +10357,7 @@ export function initNeonBruiser(): Cleanup {
                         for (let k = 0; k < placedObjects.length; k++) {
                             const o2 = placedObjects[k];
                             if (o2 === obj) continue;
-                            if (o2.type === 'ladder') continue;
+                            if (o2.type === 'ladder' || o2.type === 'fire') continue;
                             if (o2.type === 'door' && o2.isOpen) continue;
                             
                             const o2WidthX = (o2.type === 'crafting_bench') ? 1.6 : 0.9;
@@ -8023,7 +10416,7 @@ export function initNeonBruiser(): Cleanup {
 
             // Resolve vertical AABB collision with placed blocks (grounding & head bump)
             placedObjects.forEach(obj => {
-                if (obj.type === 'ladder') return;
+                if (obj.type === 'ladder' || obj.type === 'fire') return;
                 if (obj.type === 'door' && obj.isOpen) return;
 
                 const px = camera.position.x;
@@ -8044,14 +10437,19 @@ export function initNeonBruiser(): Cleanup {
                 if (dx < limitX && dz < limitZ) {
                     const py = camera.position.y - 1.6;
                     const oy = obj.pos.y;
-                    const height = (obj.type === 'crafting_bench') ? 1.0 : (obj.type === 'door' ? 1.8 : (obj.type === 'stone_slab' ? 0.45 : 0.9));
+                    const height = (obj.type === 'crafting_bench') ? 1.0 : (obj.type === 'door' ? 1.8 : ((obj.type === 'stone_slab' || obj.type === 'bed') ? 0.45 : 0.9));
 
                     // Falling onto block (grounding)
                     if (velocity.y <= 0) {
                         if (py >= oy + height - 0.3 && py < oy + height) {
-                            camera.position.y = oy + height + 1.6;
-                            velocity.y = 0;
-                            groundedThisFrame = true;
+                            if (physicsMode === 'bouncy' && velocity.y < -3.0) {
+                                velocity.y = -velocity.y * 0.75;
+                                AudioSynth.playBounce(camera.position);
+                            } else {
+                                camera.position.y = oy + height + 1.6;
+                                velocity.y = 0;
+                                groundedThisFrame = true;
+                            }
                         }
                     }
                     // Jumping into block from below (head bump)
@@ -8067,16 +10465,22 @@ export function initNeonBruiser(): Cleanup {
             // Snap Y coordinate to heightmapped terrain Y
             const terrainY = getTerrainHeight(camera.position.x, camera.position.z, playerInCave);
             if (camera.position.y < terrainY + 1.6) {
-                velocity.y = 0;
-                camera.position.y = terrainY + 1.6;
-                groundedThisFrame = true;
+                if (physicsMode === 'bouncy' && velocity.y < -3.0) {
+                    velocity.y = -velocity.y * 0.75;
+                    camera.position.y = terrainY + 1.6;
+                    AudioSynth.playBounce(camera.position);
+                } else {
+                    velocity.y = 0;
+                    camera.position.y = terrainY + 1.6;
+                    groundedThisFrame = true;
+                }
             }
 
             if (groundedThisFrame) {
                 if (!isGrounded) {
                     const fallDistance = highestYSinceGrounded - camera.position.y;
                     if (fallDistance >= 3.0) {
-                        if (!isPlayerInWater && !nearLadder && currentGameMode !== 'freedom' && !ridingBoat && !inTurret && !inBush) {
+                        if (!isPlayerInWater && !nearLadder && currentGameMode !== 'freedom' && physicsMode !== 'moon' && physicsMode !== 'bouncy' && !ridingBoat && !inTurret && !inBush) {
                             const damage = Math.round((fallDistance - 3.0) * 15);
                             if (damage > 0) {
                                 takeDamage(damage, 0, 0, "Fell from a high place");
@@ -8256,6 +10660,7 @@ export function initNeonBruiser(): Cleanup {
                             if (z.health <= 0) {
                                 z.isDead = true;
                                 z.deathTime = 0;
+                                handleZombieDeathDrops(z);
                             }
                             scene.remove(arrow.mesh);
                             localArrows.splice(i, 1);
@@ -8335,6 +10740,7 @@ export function initNeonBruiser(): Cleanup {
                 for (let j = animals.length - 1; j >= 0; j--) {
                     const a = animals[j];
                     if (a.isDead) continue;
+                    if (a.rider === 'local') continue; // Don't shoot your own horse!
                     const aChestPos = a.mesh.position.clone().add(new THREE.Vector3(0, 0.5, 0));
                     const aDist = arrow.pos.distanceTo(aChestPos);
                     if (aDist < 1.5) {
@@ -8688,7 +11094,7 @@ export function initNeonBruiser(): Cleanup {
             // Eating Food Animation
             if (isEating) {
                 const currentItem = hotbarItems[selectedHotbarIndex];
-                if (!currentItem || !['porkchop', 'beef', 'mutton', 'chicken', 'raw_fish'].includes(currentItem)) {
+                if (!currentItem || !['porkchop', 'beef', 'mutton', 'chicken', 'raw_fish', 'cooked_porkchop', 'cooked_beef', 'cooked_mutton', 'cooked_chicken', 'cooked_fish'].includes(currentItem)) {
                     isEating = false;
                     rightHand.position.set(0.35, -0.3, -0.7);
                     rightHand.rotation.set(0, 0, 0);
@@ -8783,8 +11189,10 @@ export function initNeonBruiser(): Cleanup {
             if (!isConnected || turretOccupant === 'peer') {
                 opponentGroup.visible = false;
                 return;
-            } else {
-                opponentGroup.visible = !opponentInvisible && (opponentInCave === playerInCave);
+            } else if (opponentGroup) {
+                opponentGroup.position.lerp(targetOpponentPos, 0.15);
+                opponentGroup.rotation.y = lerpAngle(opponentGroup.rotation.y, targetOpponentRotY, 0.15);
+                opponentGroup.visible = !opponentInvisible && (isDimensionCave(opponentInCave) === isDimensionCave(playerInCave));
             }
 
             // Decay recoil values
@@ -9319,7 +11727,7 @@ export function initNeonBruiser(): Cleanup {
                 return;
             }
             
-            // Check if near any cave entrance to enter
+            // Check if near any cave entrance or exit to transition
             if (!playerInCave) {
                 let closestEntrance = null;
                 let minEntranceDist = Infinity;
@@ -9334,29 +11742,29 @@ export function initNeonBruiser(): Cleanup {
                 });
 
                 if (closestEntrance && minEntranceDist < 3.0) {
+                    // Enter Cave
                     playerInCave = true;
-                    // Move the player to the cave floor
-                    const newY = getTerrainHeight(camera.position.x, camera.position.z, true) + 1.6;
-                    camera.position.y = newY;
+                    const cx = closestEntrance.x;
+                    const cz = closestEntrance.z;
+                    const cy = getCaveFloorHeight(cx, cz) + 1.6;
+                    camera.position.set(cx, cy, cz);
+                    highestYSinceGrounded = camera.position.y;
                     velocity.set(0, 0, 0);
-                    knockbackVel.set(0, 0, 0);
-                    AudioSynth.playBoom();
-                    addChatMessage("Entered the subterranean caves!", "system");
                     
-                    // Immediately update chunks and visibility
-                    updateChunks();
-                    clientZombies.forEach(mesh => {
-                        mesh.visible = (!!mesh.inCave === playerInCave);
+                    sendNetworkMessage({
+                        type: 'pos-sync',
+                        x: cx,
+                        y: cy - 1.6,
+                        z: cz,
+                        ry: camera.rotation.y,
+                        inCave: true
                     });
-                    animals.forEach(a => a.mesh.visible = !playerInCave);
-                    bees.forEach(b => b.mesh.visible = !playerInCave);
-                    clientBees.forEach(mesh => mesh.visible = !playerInCave);
                     
-                    syncPlayerPosition();
+                    updateChunks();
+                    addChatMessage("Entered the dark cave system.", "system");
                     return;
                 }
             } else {
-                // If in cave, check if near any cave exit to return to overworld
                 let closestExit = null;
                 let minExitDist = Infinity;
                 caveExits.forEach(ex => {
@@ -9370,25 +11778,26 @@ export function initNeonBruiser(): Cleanup {
                 });
 
                 if (closestExit && minExitDist < 3.0) {
+                    // Exit Cave
                     playerInCave = false;
-                    // Move the player to the overworld terrain height
-                    const newY = getTerrainHeight(camera.position.x, camera.position.z, false) + 1.6;
-                    camera.position.y = newY;
+                    const ex = closestExit.x;
+                    const ez = closestExit.z;
+                    const ey = getTerrainHeight(ex, ez, false) + 1.6;
+                    camera.position.set(ex, ey, ez);
+                    highestYSinceGrounded = camera.position.y;
                     velocity.set(0, 0, 0);
-                    knockbackVel.set(0, 0, 0);
-                    AudioSynth.playBoom();
-                    addChatMessage("Returned to the Overworld!", "system");
                     
-                    // Immediately update chunks and visibility
-                    updateChunks();
-                    clientZombies.forEach(mesh => {
-                        mesh.visible = (!!mesh.inCave === playerInCave);
+                    sendNetworkMessage({
+                        type: 'pos-sync',
+                        x: ex,
+                        y: ey - 1.6,
+                        z: ez,
+                        ry: camera.rotation.y,
+                        inCave: false
                     });
-                    animals.forEach(a => a.mesh.visible = !playerInCave);
-                    bees.forEach(b => b.mesh.visible = !playerInCave);
-                    clientBees.forEach(mesh => mesh.visible = !playerInCave);
                     
-                    syncPlayerPosition();
+                    updateChunks();
+                    addChatMessage("Exited back to the surface.", "system");
                     return;
                 }
             }
@@ -9452,6 +11861,7 @@ export function initNeonBruiser(): Cleanup {
                     returnHeldItemToInventory();
                 }
                 requestPointerLock();
+                saveWorld(false);
             }
         }
 
@@ -9459,10 +11869,11 @@ export function initNeonBruiser(): Cleanup {
             if (!heldItem) return;
             const type = heldItem.type;
             const count = heldItem.count;
+            const durability = heldItem.durability !== undefined ? heldItem.durability : null;
             heldItem = null;
             
             for (let i = 0; i < count; i++) {
-                addFoodToInventory(type);
+                addFoodToInventory(type, durability);
             }
             updateHotbarUI();
             updateInventoryUI();
@@ -9502,24 +11913,28 @@ export function initNeonBruiser(): Cleanup {
                 if (slotType === 'hotbar') {
                     const tempType = hotbarItems[index];
                     const tempCount = hotbarCounts[index];
+                    const tempDurability = hotbarDurability[index];
                     
                     hotbarItems[index] = heldItem.type;
                     hotbarCounts[index] = heldItem.count;
+                    hotbarDurability[index] = heldItem.durability !== undefined ? heldItem.durability : null;
                     
                     if (tempType) {
-                        heldItem = { type: tempType, count: tempCount };
+                        heldItem = { type: tempType, count: tempCount, durability: tempDurability };
                     } else {
                         heldItem = null;
                     }
                 } else {
                     const tempType = inventoryItems[index];
                     const tempCount = inventoryCounts[index];
+                    const tempDurability = inventoryDurability[index];
                     
                     inventoryItems[index] = heldItem.type;
                     inventoryCounts[index] = heldItem.count;
+                    inventoryDurability[index] = heldItem.durability !== undefined ? heldItem.durability : null;
                     
                     if (tempType) {
-                        heldItem = { type: tempType, count: tempCount };
+                        heldItem = { type: tempType, count: tempCount, durability: tempDurability };
                     } else {
                         heldItem = null;
                     }
@@ -9527,15 +11942,25 @@ export function initNeonBruiser(): Cleanup {
             } else {
                 if (slotType === 'hotbar') {
                     if (hotbarItems[index]) {
-                        heldItem = { type: hotbarItems[index], count: hotbarCounts[index] };
+                        heldItem = { 
+                            type: hotbarItems[index], 
+                            count: hotbarCounts[index],
+                            durability: hotbarDurability[index] !== undefined ? hotbarDurability[index] : null 
+                        };
                         hotbarItems[index] = null;
                         hotbarCounts[index] = 0;
+                        hotbarDurability[index] = null;
                     }
                 } else {
                     if (inventoryItems[index]) {
-                        heldItem = { type: inventoryItems[index], count: inventoryCounts[index] };
+                        heldItem = { 
+                            type: inventoryItems[index], 
+                            count: inventoryCounts[index],
+                            durability: inventoryDurability[index] !== undefined ? inventoryDurability[index] : null 
+                        };
                         inventoryItems[index] = null;
                         inventoryCounts[index] = 0;
+                        inventoryDurability[index] = null;
                     }
                 }
             }
@@ -9556,9 +11981,15 @@ export function initNeonBruiser(): Cleanup {
 
             let hungerRestored = 0;
             if (item === 'porkchop') hungerRestored = 20;
+            else if (item === 'cooked_porkchop') hungerRestored = 40;
             else if (item === 'beef') hungerRestored = 30;
+            else if (item === 'cooked_beef') hungerRestored = 50;
             else if (item === 'mutton') hungerRestored = 15;
+            else if (item === 'cooked_mutton') hungerRestored = 35;
             else if (item === 'chicken') hungerRestored = 10;
+            else if (item === 'cooked_chicken') hungerRestored = 30;
+            else if (item === 'raw_fish') hungerRestored = 12;
+            else if (item === 'cooked_fish') hungerRestored = 25;
 
             if (hungerRestored > 0) {
                 hunger = Math.min(100, hunger + hungerRestored);
@@ -9595,12 +12026,14 @@ export function initNeonBruiser(): Cleanup {
             const item = hotbarItems[idx];
             if (item === 'bow') {
                 activeWeapon = 'bow';
-            } else if (item === 'wooden_axe') {
+            } else if (item && item.endsWith('_axe')) {
                 activeWeapon = 'wooden_axe';
-            } else if (item === 'wooden_sword') {
+            } else if (item && item.endsWith('_sword')) {
                 activeWeapon = 'wooden_sword';
-            } else if (item === 'wooden_pickaxe') {
+            } else if (item && item.endsWith('_pickaxe')) {
                 activeWeapon = 'wooden_pickaxe';
+            } else if (item && item.endsWith('_shovel')) {
+                activeWeapon = 'wooden_shovel';
             } else {
                 activeWeapon = 'fists';
             }
@@ -9639,11 +12072,15 @@ export function initNeonBruiser(): Cleanup {
                 }
             }
             
-            if (hunger >= 80 && myHealth < 100) {
-                if (now - lastRegenTime > 4000) {
-                    myHealth = Math.min(100, myHealth + 5);
+            if (hunger >= 95 && myHealth < 100) {
+                if (now - lastRegenTime > 5000) {
+                    myHealth = Math.min(100, myHealth + 2);
                     updateHud();
                     updateMinecraftStatsUI();
+                    sendNetworkMessage({
+                        type: 'health-sync',
+                        health: myHealth
+                    });
                     lastRegenTime = now;
                 }
             }
@@ -9678,6 +12115,9 @@ export function initNeonBruiser(): Cleanup {
         }
 
         const ITEM_ICONS = {
+            charcoal: '🌑',
+            campfire: '🔥',
+            unlit_campfire: '🪵',
             fists: '✊',
             kick: '🦶',
             bow: '🏹',
@@ -9691,10 +12131,54 @@ export function initNeonBruiser(): Cleanup {
             planks: '📦',
             sticks: '🥢',
             wooden_sword: '🗡️',
-            wooden_pickaxe: '⛏️'
+            wooden_pickaxe: '⛏️',
+            coral: '🪸',
+            furnace: '🔥',
+            chest: '🧳',
+            stone: '🪨',
+            smooth_stone: '🪨',
+            wool: '🧶',
+            bed: '🛏️',
+            raw_fish: '🐟',
+            cooked_fish: '🍣',
+            cooked_porkchop: '🍗',
+            cooked_beef: '🥩',
+            cooked_mutton: '🍖',
+            cooked_chicken: '🍗',
+            iron_ingot: '🪙',
+            raw_iron: '🪨',
+            coal: '🌑',
+            leather: '💼',
+            turtle_shell: '🐢',
+            boat: '🛶',
+            stone_stairs: '🪜',
+            wooden_stairs: '🪜',
+            stone_slab: '➖',
+            door: '🚪',
+            ladder: '🪜',
+            stone_cutter: '⚙️',
+            saddle: '🏇',
+            wooden_shovel: '🪏',
+            stone_shovel: '🪏',
+            iron_shovel: '🪏',
+            copper_shovel: '🪏',
+            copper_pickaxe: '⛏️',
+            copper_axe: '🪓',
+            copper_sword: '⚔️',
+            limestone: '⬜',
+            flint: '☄️',
+            flint_and_steel: '🔥',
+            raw_copper: '🪨',
+            copper_ingot: '🪙',
+            sand: '🏜️',
+            gunpowder: '🧂',
+            tnt: '🧨'
         };
         
         const ITEM_NAMES = {
+            charcoal: 'Charcoal',
+            campfire: 'Campfire',
+            unlit_campfire: 'Unlit Campfire',
             fists: 'Fists',
             kick: 'Kick',
             bow: 'Bow',
@@ -9702,13 +12186,54 @@ export function initNeonBruiser(): Cleanup {
             beef: 'Raw Beef',
             mutton: 'Raw Mutton',
             chicken: 'Raw Chicken',
+            raw_fish: 'Raw Fish',
+            cooked_fish: 'Cooked Fish',
+            cooked_porkchop: 'Cooked Porkchop',
+            cooked_beef: 'Cooked Beef',
+            cooked_mutton: 'Cooked Mutton',
+            cooked_chicken: 'Cooked Chicken',
             wooden_axe: 'Wooden Axe',
             log: 'Oak Log',
             crafting_bench: 'Crafting Bench',
             planks: 'Oak Planks',
             sticks: 'Sticks',
             wooden_sword: 'Wooden Sword',
-            wooden_pickaxe: 'Wooden Pickaxe'
+            wooden_pickaxe: 'Wooden Pickaxe',
+            coral: 'Coral',
+            furnace: 'Furnace',
+            chest: 'Chest',
+            stone: 'Stone',
+            smooth_stone: 'Smooth Stone',
+            wool: 'Wool',
+            bed: 'Bed',
+            iron_ingot: 'Iron Ingot',
+            raw_iron: 'Raw Iron',
+            coal: 'Coal',
+            leather: 'Leather',
+            turtle_shell: 'Turtle Shell',
+            boat: 'Boat',
+            stone_stairs: 'Stone Stairs',
+            wooden_stairs: 'Wooden Stairs',
+            stone_slab: 'Stone Slab',
+            door: 'Door',
+            ladder: 'Ladder',
+            stone_cutter: 'Stone Cutter',
+            saddle: 'Saddle',
+            wooden_shovel: 'Wooden Shovel',
+            stone_shovel: 'Stone Shovel',
+            iron_shovel: 'Iron Shovel',
+            copper_shovel: 'Copper Shovel',
+            copper_pickaxe: 'Copper Pickaxe',
+            copper_axe: 'Copper Axe',
+            copper_sword: 'Copper Sword',
+            limestone: 'Limestone',
+            flint: 'Flint',
+            flint_and_steel: 'Flint and Steel',
+            raw_copper: 'Raw Copper',
+            copper_ingot: 'Copper Ingot',
+            sand: 'Sand',
+            gunpowder: 'Gunpowder',
+            tnt: 'TNT'
         };
 
         function getItemIconDataURL(type) {
@@ -9825,6 +12350,237 @@ export function initNeonBruiser(): Cleanup {
                 ctx.lineTo(48, 30);
                 ctx.fill();
             } 
+            else if (type === 'raw_fish') {
+                // Silver-blue raw fish
+                // Draw tail fin
+                ctx.fillStyle = '#3a6b93';
+                ctx.beginPath();
+                ctx.moveTo(12, 32);
+                ctx.lineTo(2, 22);
+                ctx.lineTo(6, 32);
+                ctx.lineTo(2, 42);
+                ctx.closePath();
+                ctx.fill();
+
+                // Draw dorsal/ventral fins
+                ctx.fillStyle = '#4f8bc4';
+                // dorsal (top)
+                ctx.beginPath();
+                ctx.moveTo(28, 24);
+                ctx.quadraticCurveTo(24, 12, 16, 20);
+                ctx.closePath();
+                ctx.fill();
+                // ventral (bottom)
+                ctx.beginPath();
+                ctx.moveTo(28, 40);
+                ctx.quadraticCurveTo(24, 52, 18, 44);
+                ctx.closePath();
+                ctx.fill();
+
+                // Draw body
+                ctx.fillStyle = '#4682b4';
+                ctx.beginPath();
+                ctx.ellipse(28, 32, 20, 10, 0, 0, 2 * Math.PI);
+                ctx.fill();
+
+                // Belly
+                ctx.fillStyle = '#e0ffff';
+                ctx.beginPath();
+                ctx.ellipse(28, 34, 18, 6, 0, 0, 2 * Math.PI);
+                ctx.fill();
+
+                // Eye
+                ctx.fillStyle = '#000000';
+                ctx.beginPath();
+                ctx.arc(40, 30, 2.5, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(41, 29, 0.8, 0, 2 * Math.PI);
+                ctx.fill();
+
+                // Gill line
+                ctx.strokeStyle = '#3a6b93';
+                ctx.lineWidth = 2;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.arc(36, 32, 6, -Math.PI / 3, Math.PI / 3);
+                ctx.stroke();
+            }
+            else if (type === 'cooked_fish') {
+                // Cooked salmon/burnt-sienna fish
+                // Draw tail fin
+                ctx.fillStyle = '#c85a17';
+                ctx.beginPath();
+                ctx.moveTo(12, 32);
+                ctx.lineTo(2, 22);
+                ctx.lineTo(6, 32);
+                ctx.lineTo(2, 42);
+                ctx.closePath();
+                ctx.fill();
+
+                // Draw dorsal/ventral fins
+                ctx.fillStyle = '#ff7f50';
+                // dorsal (top)
+                ctx.beginPath();
+                ctx.moveTo(28, 24);
+                ctx.quadraticCurveTo(24, 12, 16, 20);
+                ctx.closePath();
+                ctx.fill();
+                // ventral (bottom)
+                ctx.beginPath();
+                ctx.moveTo(28, 40);
+                ctx.quadraticCurveTo(24, 52, 18, 44);
+                ctx.closePath();
+                ctx.fill();
+
+                // Draw body
+                ctx.fillStyle = '#e97451';
+                ctx.beginPath();
+                ctx.ellipse(28, 32, 20, 10, 0, 0, 2 * Math.PI);
+                ctx.fill();
+
+                // Belly
+                ctx.fillStyle = '#ffebcd';
+                ctx.beginPath();
+                ctx.ellipse(28, 34, 18, 6, 0, 0, 2 * Math.PI);
+                ctx.fill();
+
+                // Eye
+                ctx.fillStyle = '#000000';
+                ctx.beginPath();
+                ctx.arc(40, 30, 2.5, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(41, 29, 0.8, 0, 2 * Math.PI);
+                ctx.fill();
+
+                // Gill line
+                ctx.strokeStyle = '#c85a17';
+                ctx.lineWidth = 2;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.arc(36, 32, 6, -Math.PI / 3, Math.PI / 3);
+                ctx.stroke();
+
+                // Grill/cook lines
+                ctx.strokeStyle = '#8b4513';
+                ctx.lineWidth = 1.5;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(24, 25);
+                ctx.lineTo(20, 35);
+                ctx.moveTo(30, 25);
+                ctx.lineTo(26, 35);
+                ctx.stroke();
+            }
+            else if (type === 'cooked_porkchop') {
+                // Golden-brown porkchop
+                ctx.fillStyle = '#cd853f';
+                ctx.beginPath();
+                ctx.ellipse(32, 34, 16, 12, Math.PI / 6, 0, 2 * Math.PI);
+                ctx.fill();
+
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.arc(32, 34, 16, Math.PI * 0.8, Math.PI * 1.5);
+                ctx.stroke();
+
+                ctx.strokeStyle = '#d2b48c';
+                ctx.lineWidth = 5;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(42, 38);
+                ctx.lineTo(54, 46);
+                ctx.stroke();
+
+                ctx.fillStyle = '#d2b48c';
+                ctx.beginPath();
+                ctx.arc(54, 46, 4, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+            else if (type === 'cooked_beef') {
+                // Roasted dark-brown steak
+                ctx.fillStyle = '#5c4033';
+                ctx.beginPath();
+                ctx.moveTo(20, 24);
+                ctx.bezierCurveTo(15, 12, 45, 12, 48, 24);
+                ctx.bezierCurveTo(52, 36, 44, 48, 32, 50);
+                ctx.bezierCurveTo(20, 52, 10, 36, 20, 24);
+                ctx.fill();
+
+                ctx.strokeStyle = '#fffff0';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(32, 36, 14, Math.PI * 0.1, Math.PI * 0.9);
+                ctx.stroke();
+
+                ctx.strokeStyle = '#eeeeee';
+                ctx.lineWidth = 4;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(32, 22);
+                ctx.lineTo(32, 44);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(24, 26);
+                ctx.lineTo(40, 26);
+                ctx.stroke();
+            }
+            else if (type === 'cooked_mutton') {
+                // Cooked mutton chop
+                ctx.fillStyle = '#8b5a2b';
+                ctx.beginPath();
+                ctx.ellipse(32, 32, 18, 10, -Math.PI / 4, 0, 2 * Math.PI);
+                ctx.fill();
+
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.ellipse(32, 32, 18, 10, -Math.PI / 4, Math.PI * 1.5, Math.PI * 2.0);
+                ctx.stroke();
+
+                ctx.strokeStyle = '#f5f5dc';
+                ctx.lineWidth = 4;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(24, 40);
+                ctx.lineTo(12, 52);
+                ctx.stroke();
+
+                ctx.fillStyle = '#f5f5dc';
+                ctx.beginPath();
+                ctx.arc(12, 52, 3, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+            else if (type === 'cooked_chicken') {
+                // Roasted chicken drumstick
+                ctx.strokeStyle = '#d2b48c';
+                ctx.lineWidth = 6;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(32, 32);
+                ctx.lineTo(16, 48);
+                ctx.stroke();
+
+                ctx.fillStyle = '#d2b48c';
+                ctx.beginPath();
+                ctx.arc(14, 48, 4, 0, 2 * Math.PI);
+                ctx.arc(18, 50, 4, 0, 2 * Math.PI);
+                ctx.fill();
+
+                ctx.fillStyle = '#8b5a2b';
+                ctx.beginPath();
+                ctx.arc(40, 24, 13, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.moveTo(28, 34);
+                ctx.lineTo(44, 14);
+                ctx.lineTo(48, 30);
+                ctx.fill();
+            }
             else if (type === 'bow') {
                 ctx.strokeStyle = '#8b5a2b';
                 ctx.lineWidth = 4;
@@ -9976,6 +12732,489 @@ export function initNeonBruiser(): Cleanup {
                 ctx.arc(44, 20, 12, Math.PI * 0.75, Math.PI * 1.75);
                 ctx.stroke();
             }
+            else if (type === 'stone') {
+                ctx.fillStyle = '#888888';
+                ctx.fillRect(12, 12, 40, 40);
+                ctx.fillStyle = '#666666';
+                ctx.fillRect(16, 16, 8, 8);
+                ctx.fillRect(36, 28, 8, 8);
+            }
+            else if (type === 'smooth_stone') {
+                ctx.fillStyle = '#aaaaaa';
+                ctx.fillRect(12, 12, 40, 40);
+                ctx.strokeStyle = '#cccccc';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(13, 13, 38, 38);
+            }
+            else if (type === 'stone_cutter') {
+                ctx.fillStyle = '#666666';
+                ctx.fillRect(12, 28, 40, 24);
+                ctx.fillStyle = '#cccccc';
+                ctx.beginPath();
+                ctx.arc(32, 24, 12, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#888888';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+            else if (type === 'boat') {
+                ctx.fillStyle = '#8b5a2b';
+                ctx.beginPath();
+                ctx.moveTo(12, 36);
+                ctx.lineTo(52, 36);
+                ctx.lineTo(44, 48);
+                ctx.lineTo(20, 48);
+                ctx.closePath();
+                ctx.fill();
+            }
+            else if (type === 'stone_stairs') {
+                ctx.fillStyle = '#888888';
+                ctx.beginPath();
+                ctx.moveTo(12, 52);
+                ctx.lineTo(12, 38);
+                ctx.lineTo(25, 38);
+                ctx.lineTo(25, 25);
+                ctx.lineTo(38, 25);
+                ctx.lineTo(38, 12);
+                ctx.lineTo(52, 12);
+                ctx.lineTo(52, 52);
+                ctx.closePath();
+                ctx.fill();
+            }
+            else if (type === 'wooden_stairs') {
+                ctx.fillStyle = '#c49a6c';
+                ctx.beginPath();
+                ctx.moveTo(12, 52);
+                ctx.lineTo(12, 38);
+                ctx.lineTo(25, 38);
+                ctx.lineTo(25, 25);
+                ctx.lineTo(38, 25);
+                ctx.lineTo(38, 12);
+                ctx.lineTo(52, 12);
+                ctx.lineTo(52, 52);
+                ctx.closePath();
+                ctx.fill();
+            }
+            else if (type === 'stone_slab') {
+                ctx.fillStyle = '#888888';
+                ctx.fillRect(12, 32, 40, 20);
+            }
+            else if (type === 'door') {
+                ctx.fillStyle = '#8b5a2b';
+                ctx.fillRect(16, 8, 32, 48);
+                ctx.strokeStyle = '#5c4033';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(18, 10, 28, 44);
+                ctx.fillStyle = '#cccccc';
+                ctx.beginPath();
+                ctx.arc(42, 32, 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            else if (type === 'ladder') {
+                ctx.strokeStyle = '#8b5a2b';
+                ctx.lineWidth = 4;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(20, 8); ctx.lineTo(20, 56);
+                ctx.moveTo(44, 8); ctx.lineTo(44, 56);
+                ctx.stroke();
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(20, 20); ctx.lineTo(44, 20);
+                ctx.moveTo(20, 32); ctx.lineTo(44, 32);
+                ctx.moveTo(20, 44); ctx.lineTo(44, 44);
+                ctx.stroke();
+            }
+            else if (type === 'wool') {
+                ctx.fillStyle = '#f5f5f5';
+                ctx.beginPath();
+                ctx.arc(24, 32, 10, 0, Math.PI * 2);
+                ctx.arc(40, 32, 10, 0, Math.PI * 2);
+                ctx.arc(32, 24, 10, 0, Math.PI * 2);
+                ctx.arc(32, 38, 10, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            else if (type === 'bed') {
+                ctx.fillStyle = '#8b5a2b';
+                ctx.fillRect(10, 24, 44, 20);
+                ctx.fillStyle = '#b22222';
+                ctx.fillRect(24, 20, 30, 20);
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(12, 20, 12, 20);
+            }
+            else if (type === 'furnace') {
+                ctx.fillStyle = '#555555';
+                ctx.fillRect(12, 12, 40, 40);
+                ctx.fillStyle = '#222222';
+                ctx.fillRect(20, 28, 24, 16);
+            }
+            else if (type === 'chest') {
+                ctx.fillStyle = '#8b5a2b';
+                ctx.fillRect(12, 14, 40, 36);
+                ctx.fillStyle = '#5c4033';
+                ctx.strokeRect(14, 16, 36, 32);
+                ctx.fillStyle = '#cccccc';
+                ctx.fillRect(29, 28, 6, 8);
+            }
+            else if (type === 'leather') {
+                ctx.fillStyle = '#8b5a2b';
+                ctx.beginPath();
+                ctx.moveTo(16, 20);
+                ctx.lineTo(48, 16);
+                ctx.lineTo(44, 48);
+                ctx.lineTo(20, 44);
+                ctx.closePath();
+                ctx.fill();
+            }
+            else if (type === 'turtle_shell') {
+                ctx.fillStyle = '#2e8b57';
+                ctx.beginPath();
+                ctx.arc(32, 36, 16, Math.PI, 0);
+                ctx.closePath();
+                ctx.fill();
+            }
+            else if (type === 'charcoal') {
+                ctx.fillStyle = '#262626';
+                ctx.beginPath();
+                ctx.moveTo(24, 28);
+                ctx.lineTo(40, 18);
+                ctx.lineTo(48, 32);
+                ctx.lineTo(36, 46);
+                ctx.lineTo(18, 38);
+                ctx.closePath();
+                ctx.fill();
+            }
+            else if (type === 'campfire' || type === 'unlit_campfire' || type === 'campfire_coal' || type === 'campfire_charcoal') {
+                // Draw logs (crossed brown lines)
+                ctx.strokeStyle = '#8b5a2b';
+                ctx.lineWidth = 6;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(18, 48);
+                ctx.lineTo(46, 24);
+                ctx.moveTo(46, 48);
+                ctx.lineTo(18, 24);
+                ctx.stroke();
+                
+                if (type === 'campfire' || type === 'campfire_coal' || type === 'campfire_charcoal') {
+                    // Draw fire
+                    ctx.fillStyle = '#ff5500';
+                    ctx.beginPath();
+                    ctx.moveTo(32, 14);
+                    ctx.lineTo(42, 38);
+                    ctx.lineTo(22, 38);
+                    ctx.closePath();
+                    ctx.fill();
+                    
+                    ctx.fillStyle = '#ffea00';
+                    ctx.beginPath();
+                    ctx.moveTo(32, 22);
+                    ctx.lineTo(38, 38);
+                    ctx.lineTo(26, 38);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+            }
+            else if (type === 'coal') {
+                ctx.fillStyle = '#111111';
+                ctx.beginPath();
+                ctx.moveTo(24, 28);
+                ctx.lineTo(40, 18);
+                ctx.lineTo(48, 32);
+                ctx.lineTo(36, 46);
+                ctx.lineTo(18, 38);
+                ctx.closePath();
+                ctx.fill();
+            }
+            else if (type === 'iron_ingot') {
+                ctx.fillStyle = '#a34f40'; // rust reddish-brown
+                ctx.beginPath();
+                ctx.moveTo(16, 38);
+                ctx.lineTo(36, 22);
+                ctx.lineTo(48, 26);
+                ctx.lineTo(28, 42);
+                ctx.closePath();
+                ctx.fill();
+            }
+            else if (type === 'copper_ingot') {
+                ctx.fillStyle = '#e88d72'; // bright pinkish-orange metallic copper
+                ctx.beginPath();
+                ctx.moveTo(16, 38);
+                ctx.lineTo(36, 22);
+                ctx.lineTo(48, 26);
+                ctx.lineTo(28, 42);
+                ctx.closePath();
+                ctx.fill();
+            }
+            else if (type === 'raw_iron') {
+                ctx.fillStyle = '#a34f40'; // rust reddish-brown
+                ctx.beginPath();
+                ctx.arc(26, 34, 10, 0, Math.PI * 2);
+                ctx.arc(38, 28, 8, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            else if (type === 'raw_copper') {
+                ctx.fillStyle = '#c87a68'; // raw copper reddish-brown
+                ctx.beginPath();
+                ctx.arc(26, 34, 10, 0, Math.PI * 2);
+                ctx.arc(38, 28, 8, 0, Math.PI * 2);
+                ctx.fill();
+                // green oxidation specs
+                ctx.fillStyle = '#4f7942';
+                ctx.beginPath();
+                ctx.arc(28, 32, 2.5, 0, Math.PI*2);
+                ctx.arc(36, 26, 2, 0, Math.PI*2);
+                ctx.fill();
+            }
+            else if (type === 'limestone') {
+                ctx.fillStyle = '#eae6df'; // white/light cream
+                ctx.fillRect(12, 12, 40, 40);
+                ctx.strokeStyle = '#d7d2c9';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(12, 12, 40, 40);
+            }
+            else if (type === 'flint') {
+                ctx.fillStyle = '#333333';
+                ctx.beginPath();
+                ctx.moveTo(32, 12);
+                ctx.lineTo(48, 28);
+                ctx.lineTo(40, 48);
+                ctx.lineTo(24, 48);
+                ctx.lineTo(16, 28);
+                ctx.closePath();
+                ctx.fill();
+            }
+            else if (type === 'flint_and_steel') {
+                // Steel loop
+                ctx.strokeStyle = '#aaaaaa';
+                ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.arc(28, 32, 10, -Math.PI / 2, Math.PI / 2);
+                ctx.stroke();
+                // Flint piece
+                ctx.fillStyle = '#333333';
+                ctx.beginPath();
+                ctx.arc(38, 36, 6, 0, Math.PI*2);
+                ctx.fill();
+                // Spark
+                ctx.fillStyle = '#ff3300';
+                ctx.beginPath();
+                ctx.arc(38, 24, 3, 0, Math.PI*2);
+                ctx.fill();
+            }
+            else if (type.endsWith('_sword')) {
+                let bladeColor = '#5c4033';
+                if (type.startsWith('stone_')) bladeColor = '#888888';
+                else if (type.startsWith('iron_')) bladeColor = '#a34f40';
+                else if (type.startsWith('copper_')) bladeColor = '#e88d72';
+                ctx.strokeStyle = '#8b5a2b';
+                ctx.lineWidth = 4;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(16, 48); ctx.lineTo(26, 38);
+                ctx.stroke();
+                ctx.strokeStyle = '#8b5a2b';
+                ctx.lineWidth = 5;
+                ctx.beginPath();
+                ctx.moveTo(20, 34); ctx.lineTo(30, 44);
+                ctx.stroke();
+                ctx.strokeStyle = bladeColor;
+                ctx.lineWidth = 6;
+                ctx.beginPath();
+                ctx.moveTo(24, 40); ctx.lineTo(48, 16);
+                ctx.stroke();
+                ctx.fillStyle = bladeColor;
+                ctx.beginPath();
+                ctx.arc(48, 16, 3, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+            else if (type.endsWith('_pickaxe')) {
+                let headColor = '#5c4033';
+                if (type.startsWith('stone_')) headColor = '#888888';
+                else if (type.startsWith('iron_')) headColor = '#a34f40';
+                else if (type.startsWith('copper_')) headColor = '#e88d72';
+                ctx.strokeStyle = '#8b5a2b';
+                ctx.lineWidth = 4;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(16, 48); ctx.lineTo(40, 24);
+                ctx.stroke();
+                ctx.strokeStyle = headColor;
+                ctx.lineWidth = 5;
+                ctx.beginPath();
+                ctx.arc(44, 20, 12, Math.PI * 0.75, Math.PI * 1.75);
+                ctx.stroke();
+            }
+            else if (type.endsWith('_axe')) {
+                let headColor = '#5c4033';
+                if (type.startsWith('stone_')) headColor = '#888888';
+                else if (type.startsWith('iron_')) headColor = '#a34f40';
+                else if (type.startsWith('copper_')) headColor = '#e88d72';
+                ctx.strokeStyle = '#8b5a2b';
+                ctx.lineWidth = 5;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(15, 49); ctx.lineTo(45, 19);
+                ctx.stroke();
+                ctx.fillStyle = headColor;
+                ctx.beginPath();
+                ctx.moveTo(40, 14);
+                ctx.lineTo(52, 10);
+                ctx.lineTo(48, 26);
+                ctx.lineTo(36, 22);
+                ctx.closePath();
+                ctx.fill();
+            }
+            else if (type.endsWith('_helmet')) {
+                let color = '#8b5a2b';
+                if (type.startsWith('turtle_')) color = '#2e8b57';
+                else if (type.startsWith('iron_')) color = '#a34f40';
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.arc(32, 34, 18, Math.PI, 0);
+                ctx.fillRect(14, 34, 36, 12);
+                ctx.fill();
+            }
+            else if (type.endsWith('_chestplate')) {
+                let color = '#8b5a2b';
+                if (type.startsWith('turtle_')) color = '#2e8b57';
+                else if (type.startsWith('iron_')) color = '#a34f40';
+                ctx.fillStyle = color;
+                ctx.fillRect(16, 18, 32, 28);
+                ctx.fillRect(10, 18, 44, 8);
+            }
+            else if (type.endsWith('_leggings')) {
+                let color = '#8b5a2b';
+                if (type.startsWith('turtle_')) color = '#2e8b57';
+                else if (type.startsWith('iron_')) color = '#a34f40';
+                ctx.fillStyle = color;
+                ctx.fillRect(16, 20, 32, 24);
+                ctx.clearRect(28, 32, 8, 12);
+            }
+            else if (type.endsWith('_boots')) {
+                let color = '#8b5a2b';
+                if (type.startsWith('turtle_')) color = '#2e8b57';
+                else if (type.startsWith('iron_')) color = '#a34f40';
+                ctx.fillStyle = color;
+                ctx.fillRect(14, 28, 12, 20);
+                ctx.fillRect(38, 28, 12, 20);
+            }
+            else if (type === 'coral') {
+                ctx.fillStyle = '#ff00aa';
+                ctx.fillRect(16, 16, 32, 32);
+            }
+            else if (type === 'saddle') {
+                ctx.fillStyle = '#8b4513'; // Saddle brown
+                ctx.beginPath();
+                ctx.arc(32, 32, 16, 0, Math.PI, false);
+                ctx.fill();
+                ctx.fillRect(16, 26, 32, 6);
+                
+                // Gray stirrups
+                ctx.strokeStyle = '#aaaaaa';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(20, 32);
+                ctx.lineTo(20, 48);
+                ctx.moveTo(44, 32);
+                ctx.lineTo(44, 48);
+                ctx.stroke();
+                
+                ctx.fillStyle = '#cccccc';
+                ctx.fillRect(17, 48, 6, 3);
+                ctx.fillRect(41, 48, 6, 3);
+            }
+            else if (type.endsWith('_shovel')) {
+                ctx.strokeStyle = '#8b5a2b';
+                ctx.lineWidth = 4;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(16, 48); ctx.lineTo(38, 26);
+                ctx.stroke();
+
+                let headColor = '#5c4033';
+                if (type.startsWith('stone_')) headColor = '#888888';
+                else if (type.startsWith('iron_')) headColor = '#a34f40';
+                else if (type.startsWith('copper_')) headColor = '#e88d72';
+
+                ctx.fillStyle = headColor;
+                ctx.strokeStyle = '#000000';
+                ctx.lineWidth = 2;
+                
+                ctx.beginPath();
+                ctx.moveTo(44, 10);
+                ctx.lineTo(54, 20);
+                ctx.lineTo(44, 30);
+                ctx.lineTo(34, 20);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                
+                ctx.fillStyle = '#5c4033';
+                ctx.fillRect(36, 24, 4, 4);
+            }
+            else if (type === 'sand') {
+                ctx.fillStyle = '#dfd5a2';
+                ctx.fillRect(12, 12, 40, 40);
+                
+                ctx.strokeStyle = '#c2b683';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(12, 12, 40, 40);
+                
+                ctx.fillStyle = '#b5a770';
+                ctx.fillRect(18, 20, 3, 3);
+                ctx.fillRect(34, 16, 3, 3);
+                ctx.fillRect(24, 36, 3, 3);
+                ctx.fillRect(40, 40, 3, 3);
+                ctx.fillRect(42, 26, 3, 3);
+            }
+            else if (type === 'tnt') {
+                ctx.fillStyle = '#cc2222';
+                ctx.fillRect(12, 12, 40, 40);
+                
+                ctx.strokeStyle = '#881111';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(12, 12, 40, 40);
+                
+                ctx.fillStyle = '#eeeeee';
+                ctx.fillRect(12, 24, 40, 16);
+                
+                ctx.fillStyle = '#000000';
+                ctx.font = 'bold 10px monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('TNT', 32, 32);
+            }
+            else if (type === 'gunpowder') {
+                ctx.fillStyle = '#666666';
+                ctx.strokeStyle = '#444444';
+                ctx.lineWidth = 2;
+                
+                ctx.beginPath();
+                ctx.moveTo(32, 20);
+                ctx.lineTo(44, 44);
+                ctx.lineTo(20, 44);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                
+                ctx.fillStyle = '#888888';
+                ctx.fillRect(28, 36, 4, 4);
+                ctx.fillRect(36, 40, 3, 3);
+            }
+            else {
+                ctx.fillStyle = '#1e293b';
+                ctx.fillRect(8, 8, 48, 48);
+                ctx.strokeStyle = '#00f0ff';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(8, 8, 48, 48);
+                
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 12px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText((type || '??').substring(0, 5).toUpperCase(), 32, 32);
+            }
 
             const dataURL = canvas.toDataURL();
             getItemIconDataURL._iconCache[type] = dataURL;
@@ -9985,10 +13224,11 @@ export function initNeonBruiser(): Cleanup {
         function createDroppedFoodMesh(type) {
             const group = new THREE.Group();
             
-            if (type === 'porkchop') {
-                const meatMat = new THREE.MeshStandardMaterial({ color: 0xff8a9e, roughness: 0.7 });
-                const fatMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
-                const boneMat = new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.9 });
+            if (type === 'porkchop' || type === 'cooked_porkchop') {
+                const isCooked = type === 'cooked_porkchop';
+                const meatMat = new THREE.MeshStandardMaterial({ color: isCooked ? 0xb5651d : 0xff8a9e, roughness: 0.7 });
+                const fatMat = new THREE.MeshStandardMaterial({ color: isCooked ? 0xd2b48c : 0xffffff, roughness: 0.9 });
+                const boneMat = new THREE.MeshStandardMaterial({ color: isCooked ? 0xd2b48c : 0xeeeeee, roughness: 0.9 });
                 
                 const meat = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.16, 0.08), meatMat);
                 meat.castShadow = true;
@@ -10005,10 +13245,11 @@ export function initNeonBruiser(): Cleanup {
                 bone.castShadow = true;
                 group.add(bone);
             } 
-            else if (type === 'beef') {
-                const meatMat = new THREE.MeshStandardMaterial({ color: 0x8b1a1a, roughness: 0.6 });
+            else if (type === 'beef' || type === 'cooked_beef') {
+                const isCooked = type === 'cooked_beef';
+                const meatMat = new THREE.MeshStandardMaterial({ color: isCooked ? 0x5c4033 : 0x8b1a1a, roughness: 0.6 });
                 const boneMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
-                const fatMat = new THREE.MeshStandardMaterial({ color: 0xfffff0, roughness: 0.8 });
+                const fatMat = new THREE.MeshStandardMaterial({ color: isCooked ? 0xcd853f : 0xfffff0, roughness: 0.8 });
                 
                 const meat = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.2, 0.08), meatMat);
                 meat.castShadow = true;
@@ -10029,10 +13270,11 @@ export function initNeonBruiser(): Cleanup {
                 fatBorder.castShadow = true;
                 group.add(fatBorder);
             } 
-            else if (type === 'mutton') {
-                const meatMat = new THREE.MeshStandardMaterial({ color: 0xa0522d, roughness: 0.7 });
+            else if (type === 'mutton' || type === 'cooked_mutton') {
+                const isCooked = type === 'cooked_mutton';
+                const meatMat = new THREE.MeshStandardMaterial({ color: isCooked ? 0x8b5a2b : 0xa0522d, roughness: 0.7 });
                 const boneMat = new THREE.MeshStandardMaterial({ color: 0xf5f5dc, roughness: 0.9 });
-                const fatMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 });
+                const fatMat = new THREE.MeshStandardMaterial({ color: isCooked ? 0xd2b48c : 0xffffff, roughness: 0.8 });
                 
                 const meat = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.12, 0.07), meatMat);
                 meat.castShadow = true;
@@ -10049,9 +13291,10 @@ export function initNeonBruiser(): Cleanup {
                 bone.castShadow = true;
                 group.add(bone);
             } 
-            else if (type === 'chicken') {
-                const meatMat = new THREE.MeshStandardMaterial({ color: 0xe3a857, roughness: 0.7 });
-                const boneMat = new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.9 });
+            else if (type === 'chicken' || type === 'cooked_chicken') {
+                const isCooked = type === 'cooked_chicken';
+                const meatMat = new THREE.MeshStandardMaterial({ color: isCooked ? 0x8b5a2b : 0xe3a857, roughness: 0.7 });
+                const boneMat = new THREE.MeshStandardMaterial({ color: isCooked ? 0xd2b48c : 0xeeeeee, roughness: 0.9 });
                 
                 const meat = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), meatMat);
                 meat.scale.set(1.4, 1.0, 1.0);
@@ -10074,7 +13317,43 @@ export function initNeonBruiser(): Cleanup {
                 knob2.position.set(-0.17, -0.015, 0);
                 knob2.castShadow = true;
                 group.add(knob2);
-            } 
+            }
+            else if (type === 'raw_fish' || type === 'cooked_fish') {
+                const bodyColor = type === 'raw_fish' ? 0x4682b4 : 0xe97451;
+                const bellyColor = type === 'raw_fish' ? 0xe0ffff : 0xffebcd;
+                const tailColor = type === 'raw_fish' ? 0x3a6b93 : 0xc85a17;
+                
+                const bodyMat = new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.5 });
+                const bellyMat = new THREE.MeshStandardMaterial({ color: bellyColor, roughness: 0.5 });
+                const tailMat = new THREE.MeshStandardMaterial({ color: tailColor, roughness: 0.5 });
+                const eyeMat = new THREE.MeshStandardMaterial({ color: 0x000000 });
+
+                // Main body
+                const body = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.04, 0.25), bodyMat);
+                body.castShadow = true;
+                group.add(body);
+
+                // Belly
+                const belly = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.015, 0.18), bellyMat);
+                belly.position.set(0, -0.02, 0.02);
+                belly.castShadow = true;
+                group.add(belly);
+
+                // Tail
+                const tail = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.08, 0.08), tailMat);
+                tail.position.set(0, 0, -0.165);
+                tail.castShadow = true;
+                group.add(tail);
+
+                // Eyes
+                const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.01, 4, 4), eyeMat);
+                eyeL.position.set(0.061, 0.01, 0.08);
+                group.add(eyeL);
+                
+                const eyeR = new THREE.Mesh(new THREE.SphereGeometry(0.01, 4, 4), eyeMat);
+                eyeR.position.set(-0.061, 0.01, 0.08);
+                group.add(eyeR);
+            }
             else if (type === 'bow') {
                 const woodMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
                 const stringMat = new THREE.MeshBasicMaterial({ color: 0xdddddd });
@@ -10201,6 +13480,395 @@ export function initNeonBruiser(): Cleanup {
                 bench.scale.set(0.3, 0.3, 0.3);
                 group.add(bench);
             }
+            else if (type === 'stone') {
+                const stoneMat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.8 });
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 0.18), stoneMat);
+                mesh.castShadow = true;
+                group.add(mesh);
+            }
+            else if (type === 'smooth_stone') {
+                const stoneMat = new THREE.MeshStandardMaterial({ color: 0xaaaaaa, roughness: 0.5 });
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 0.18), stoneMat);
+                mesh.castShadow = true;
+                group.add(mesh);
+            }
+            else if (type === 'stone_cutter') {
+                const baseMat = new THREE.MeshStandardMaterial({ color: 0x666666, roughness: 0.8 });
+                const bladeMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.8, roughness: 0.2 });
+                const base = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.10, 0.18), baseMat);
+                base.castShadow = true;
+                group.add(base);
+                const blade = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.01, 8), bladeMat);
+                blade.rotation.x = Math.PI / 2;
+                blade.position.y = 0.08;
+                blade.castShadow = true;
+                group.add(blade);
+            }
+            else if (type === 'boat') {
+                const woodMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
+                const base = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.04, 0.14), woodMat);
+                base.castShadow = true;
+                group.add(base);
+            }
+            else if (type === 'stone_stairs' || type === 'wooden_stairs') {
+                const mat = new THREE.MeshStandardMaterial({ color: type === 'stone_stairs' ? 0x888888 : 0xc49a6c, roughness: 0.8 });
+                const step1 = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.09, 0.18), mat);
+                step1.castShadow = true;
+                group.add(step1);
+                const step2 = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.09, 0.09), mat);
+                step2.position.set(0, 0.09, -0.045);
+                step2.castShadow = true;
+                group.add(step2);
+            }
+            else if (type === 'stone_slab') {
+                const stoneMat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.8 });
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.09, 0.18), stoneMat);
+                mesh.castShadow = true;
+                group.add(mesh);
+            }
+            else if (type === 'door') {
+                const woodMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
+                const panel = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.28, 0.02), woodMat);
+                panel.castShadow = true;
+                group.add(panel);
+            }
+            else if (type === 'ladder') {
+                const woodMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
+                const l1 = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.24, 4), woodMat);
+                l1.position.set(-0.06, 0, 0);
+                l1.castShadow = true;
+                group.add(l1);
+                const l2 = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.24, 4), woodMat);
+                l2.position.set(0.06, 0, 0);
+                l2.castShadow = true;
+                group.add(l2);
+                for (let r = 0; r < 3; r++) {
+                    const rung = new THREE.Mesh(new THREE.CylinderGeometry(0.003, 0.003, 0.12, 4), woodMat);
+                    rung.rotation.z = Math.PI / 2;
+                    rung.position.y = -0.08 + r * 0.08;
+                    rung.castShadow = true;
+                    group.add(rung);
+                }
+            }
+            else if (type === 'wool') {
+                const woolMat = new THREE.MeshStandardMaterial({ color: 0xf5f5f5, roughness: 0.95 });
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.16), woolMat);
+                mesh.castShadow = true;
+                group.add(mesh);
+            }
+            else if (type === 'bed') {
+                const woodMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
+                const redMat = new THREE.MeshStandardMaterial({ color: 0xb22222, roughness: 0.8 });
+                const whiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
+                const frame = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.04, 0.28), woodMat);
+                frame.castShadow = true;
+                group.add(frame);
+                const sheet = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.02, 0.18), redMat);
+                sheet.position.set(0, 0.02, 0.05);
+                sheet.castShadow = true;
+                group.add(sheet);
+                const pillow = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.02, 0.06), whiteMat);
+                pillow.position.set(0, 0.02, -0.09);
+                pillow.castShadow = true;
+                group.add(pillow);
+            }
+            else if (type === 'furnace') {
+                const bodyMat = new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.9 });
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 0.18), bodyMat);
+                mesh.castShadow = true;
+                group.add(mesh);
+            }
+            else if (type === 'chest') {
+                const woodMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
+                const lockMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, roughness: 0.3 });
+                const base = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.16, 0.18), woodMat);
+                base.castShadow = true;
+                group.add(base);
+                const lock = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.04, 0.02), lockMat);
+                lock.position.set(0, 0.02, 0.091);
+                lock.castShadow = true;
+                group.add(lock);
+            }
+            else if (type === 'leather') {
+                const hideMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.01, 0.20), hideMat);
+                mesh.castShadow = true;
+                group.add(mesh);
+            }
+            else if (type === 'saddle') {
+                const saddleMat = new THREE.MeshStandardMaterial({ color: 0x8b4513, roughness: 0.8 }); // Reddish brown
+                const ironMat = new THREE.MeshStandardMaterial({ color: 0xdddddd, metalness: 0.8, roughness: 0.2 });
+                const base = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.05, 0.16), saddleMat);
+                base.castShadow = true;
+                group.add(base);
+                
+                // Little stirrup visual details
+                const stirrupL = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.08, 0.02), ironMat);
+                stirrupL.position.set(-0.09, -0.04, 0);
+                stirrupL.castShadow = true;
+                group.add(stirrupL);
+                
+                const stirrupR = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.08, 0.02), ironMat);
+                stirrupR.position.set(0.09, -0.04, 0);
+                stirrupR.castShadow = true;
+                group.add(stirrupR);
+            }
+            else if (type === 'turtle_shell') {
+                const shellMat = new THREE.MeshStandardMaterial({ color: 0x2e8b57, roughness: 0.5 });
+                const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), shellMat);
+                mesh.scale.set(1, 0.6, 1.2);
+                mesh.castShadow = true;
+                group.add(mesh);
+            }
+            else if (type === 'coal') {
+                const coalMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9 });
+                const mesh = new THREE.Mesh(new THREE.DodecahedronGeometry(0.06), coalMat);
+                mesh.castShadow = true;
+                group.add(mesh);
+            }
+            else if (type === 'iron_ingot') {
+                const ironMat = new THREE.MeshStandardMaterial({ color: 0xa34f40, metalness: 0.8, roughness: 0.2 });
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.04, 0.06), ironMat);
+                mesh.castShadow = true;
+                group.add(mesh);
+            }
+            else if (type === 'copper_ingot') {
+                const copperMat = new THREE.MeshStandardMaterial({ color: 0xe88d72, metalness: 0.8, roughness: 0.2 });
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.04, 0.06), copperMat);
+                mesh.castShadow = true;
+                group.add(mesh);
+            }
+            else if (type === 'raw_iron') {
+                const oreMat = new THREE.MeshStandardMaterial({ color: 0xa34f40, roughness: 0.9 });
+                const mesh = new THREE.Mesh(new THREE.DodecahedronGeometry(0.05), oreMat);
+                mesh.castShadow = true;
+                group.add(mesh);
+            }
+            else if (type === 'raw_copper') {
+                const oreMat = new THREE.MeshStandardMaterial({ color: 0xc87a68, roughness: 0.9 });
+                const mesh = new THREE.Mesh(new THREE.DodecahedronGeometry(0.05), oreMat);
+                mesh.castShadow = true;
+                group.add(mesh);
+            }
+            else if (type === 'limestone') {
+                const mat = new THREE.MeshStandardMaterial({ color: 0xeae6df, roughness: 0.9 });
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.12), mat);
+                mesh.castShadow = true;
+                group.add(mesh);
+            }
+            else if (type === 'flint') {
+                const mat = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.9 });
+                const mesh = new THREE.Mesh(new THREE.DodecahedronGeometry(0.04), mat);
+                mesh.castShadow = true;
+                group.add(mesh);
+            }
+            else if (type === 'flint_and_steel') {
+                const steelMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.8, roughness: 0.2 });
+                const flintMat = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.9 });
+                const steelMesh = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.02), steelMat);
+                steelMesh.position.set(-0.02, 0.04, 0);
+                steelMesh.castShadow = true;
+                group.add(steelMesh);
+                const flintMesh = new THREE.Mesh(new THREE.DodecahedronGeometry(0.03), flintMat);
+                flintMesh.position.set(0.03, 0.02, 0);
+                flintMesh.castShadow = true;
+                group.add(flintMesh);
+            }
+            else if (type.endsWith('_sword')) {
+                const handleMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
+                let bladeColor = 0x5c4033;
+                let metalness = 0.1, roughness = 0.9;
+                if (type.startsWith('stone_')) bladeColor = 0x888888;
+                else if (type.startsWith('iron_')) { bladeColor = 0xa34f40; metalness = 0.8; roughness = 0.2; }
+                else if (type.startsWith('copper_')) { bladeColor = 0xe88d72; metalness = 0.8; roughness = 0.2; }
+                const bladeMat = new THREE.MeshStandardMaterial({ color: bladeColor, roughness: roughness, metalness: metalness });
+                
+                const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.15, 8), handleMat);
+                handle.rotation.x = Math.PI / 2;
+                handle.castShadow = true;
+                group.add(handle);
+                
+                const guard = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.02, 0.03), handleMat);
+                guard.position.set(0, 0.01, -0.075);
+                guard.castShadow = true;
+                group.add(guard);
+                
+                const blade = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.4, 0.02), bladeMat);
+                blade.position.set(0, 0, -0.275);
+                blade.rotation.x = Math.PI / 2;
+                blade.castShadow = true;
+                group.add(blade);
+            }
+            else if (type.endsWith('_pickaxe')) {
+                const handleMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
+                let headColor = 0x5c4033;
+                let metalness = 0.1, roughness = 0.9;
+                if (type.startsWith('stone_')) headColor = 0x888888;
+                else if (type.startsWith('iron_')) { headColor = 0xa34f40; metalness = 0.8; roughness = 0.2; }
+                else if (type.startsWith('copper_')) { headColor = 0xe88d72; metalness = 0.8; roughness = 0.2; }
+                const headMat = new THREE.MeshStandardMaterial({ color: headColor, roughness: roughness, metalness: metalness });
+                
+                const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.45, 8), handleMat);
+                handle.rotation.x = Math.PI / 2;
+                handle.castShadow = true;
+                group.add(handle);
+                
+                const head = createCurvedPickaxeHeadGroup(headMat);
+                head.position.set(0, 0, -0.225);
+                head.castShadow = true;
+                group.add(head);
+            }
+            else if (type.endsWith('_axe')) {
+                const handleMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
+                let headColor = 0x5c4033;
+                let metalness = 0.1, roughness = 0.9;
+                if (type.startsWith('stone_')) headColor = 0x888888;
+                else if (type.startsWith('iron_')) { headColor = 0xa34f40; metalness = 0.8; roughness = 0.2; }
+                else if (type.startsWith('copper_')) { headColor = 0xe88d72; metalness = 0.8; roughness = 0.2; }
+                const headMat = new THREE.MeshStandardMaterial({ color: headColor, roughness: roughness, metalness: metalness });
+
+                const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.45, 8), handleMat);
+                handle.rotation.x = Math.PI / 2;
+                handle.castShadow = true;
+                group.add(handle);
+
+                const axeHead = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.12, 0.1), headMat);
+                axeHead.position.set(-0.04, 0.03, -0.15);
+                axeHead.castShadow = true;
+                group.add(axeHead);
+            }
+            else if (type.endsWith('_helmet')) {
+                let color = 0x8b5a2b;
+                let metalness = 0.1, roughness = 0.9;
+                if (type.startsWith('turtle_')) color = 0x2e8b57;
+                else if (type.startsWith('iron_')) { color = 0xa34f40; metalness = 0.8; roughness = 0.2; }
+                const mat = new THREE.MeshStandardMaterial({ color: color, metalness: metalness, roughness: roughness });
+                const mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.08, 8), mat);
+                mesh.castShadow = true;
+                group.add(mesh);
+            }
+            else if (type.endsWith('_chestplate')) {
+                let color = 0x8b5a2b;
+                let metalness = 0.1, roughness = 0.9;
+                if (type.startsWith('turtle_')) color = 0x2e8b57;
+                else if (type.startsWith('iron_')) { color = 0xa34f40; metalness = 0.8; roughness = 0.2; }
+                const mat = new THREE.MeshStandardMaterial({ color: color, metalness: metalness, roughness: roughness });
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.14, 0.08), mat);
+                mesh.castShadow = true;
+                group.add(mesh);
+            }
+            else if (type.endsWith('_leggings')) {
+                let color = 0x8b5a2b;
+                let metalness = 0.1, roughness = 0.9;
+                if (type.startsWith('turtle_')) color = 0x2e8b57;
+                else if (type.startsWith('iron_')) { color = 0xa34f40; metalness = 0.8; roughness = 0.2; }
+                const mat = new THREE.MeshStandardMaterial({ color: color, metalness: metalness, roughness: roughness });
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.12, 0.08), mat);
+                mesh.castShadow = true;
+                group.add(mesh);
+            }
+            else if (type.endsWith('_boots')) {
+                let color = 0x8b5a2b;
+                let metalness = 0.1, roughness = 0.9;
+                if (type.startsWith('turtle_')) color = 0x2e8b57;
+                else if (type.startsWith('iron_')) { color = 0xa34f40; metalness = 0.8; roughness = 0.2; }
+                const mat = new THREE.MeshStandardMaterial({ color: color, metalness: metalness, roughness: roughness });
+                const b1 = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.06), mat); b1.position.set(-0.04, 0, 0); b1.castShadow = true; group.add(b1);
+                const b2 = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.06), mat); b2.position.set(0.04, 0, 0); b2.castShadow = true; group.add(b2);
+            }
+            else if (type.endsWith('_shovel')) {
+                const handleMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
+                let headColor = 0x5c4033;
+                let metalness = 0.1, roughness = 0.9;
+                if (type.startsWith('stone_')) headColor = 0x888888;
+                else if (type.startsWith('iron_')) { headColor = 0xa34f40; metalness = 0.8; roughness = 0.2; }
+                else if (type.startsWith('copper_')) { headColor = 0xe88d72; metalness = 0.8; roughness = 0.2; }
+                const headMat = new THREE.MeshStandardMaterial({ color: headColor, roughness: roughness, metalness: metalness });
+                
+                const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.35, 8), handleMat);
+                handle.rotation.x = Math.PI / 2;
+                handle.castShadow = true;
+                group.add(handle);
+                
+                const head = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.08, 0.015), headMat);
+                head.position.set(0, 0, -0.185);
+                head.rotation.x = Math.PI / 2;
+                head.castShadow = true;
+                group.add(head);
+            }
+            else if (type === 'sand') {
+                const sandMat = new THREE.MeshStandardMaterial({ color: 0xdfd5a2, roughness: 0.9 });
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.16), sandMat);
+                mesh.castShadow = true;
+                group.add(mesh);
+            }
+            else if (type === 'tnt') {
+                const redMat = new THREE.MeshStandardMaterial({ color: 0xcc2222, roughness: 0.8 });
+                const whiteMat = new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.8 });
+                const tntBody = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.16), redMat);
+                tntBody.castShadow = true;
+                group.add(tntBody);
+                
+                const tntBand = new THREE.Mesh(new THREE.BoxGeometry(0.165, 0.04, 0.165), whiteMat);
+                tntBand.castShadow = true;
+                group.add(tntBand);
+            }
+            else if (type === 'gunpowder') {
+                const powderMat = new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.9 });
+                const mesh = new THREE.Mesh(new THREE.DodecahedronGeometry(0.04), powderMat);
+                mesh.castShadow = true;
+                group.add(mesh);
+            }
+            else if (type === 'coral') {
+                const coralColors = [
+                    0xff007f, // Neon Pink
+                    0x00f0ff, // Neon Cyan
+                    0xffea00, // Neon Yellow
+                    0xff5e00, // Neon Orange
+                    0xaa00ff, // Neon Purple
+                    0xff00aa  // Magenta
+                ];
+                const coralColor = coralColors[Math.floor(Math.random() * coralColors.length)];
+                const coralMat = new THREE.MeshStandardMaterial({
+                    color: coralColor,
+                    roughness: 0.9,
+                    emissive: coralColor,
+                    emissiveIntensity: 0.15
+                });
+                const coralType = Math.floor(Math.random() * 3);
+                if (coralType === 0) {
+                    const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.2, 8), coralMat);
+                    tube.position.set(0, 0.1, 0);
+                    tube.castShadow = true;
+                    group.add(tube);
+                } else if (coralType === 1) {
+                    const baseGeo = new THREE.SphereGeometry(0.08, 8, 8);
+                    const baseMesh = new THREE.Mesh(baseGeo, coralMat);
+                    baseMesh.position.y = 0.06;
+                    baseMesh.scale.set(1.2, 0.8, 1.2);
+                    baseMesh.castShadow = true;
+                    group.add(baseMesh);
+                } else {
+                    const baseMesh = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.12, 0.04), coralMat);
+                    baseMesh.position.y = 0.06;
+                    baseMesh.castShadow = true;
+                    group.add(baseMesh);
+                }
+            }
+            else {
+                let color = 0x888888;
+                if (type.includes('leather')) color = 0x8b5a2b;
+                else if (type.includes('turtle')) color = 0x2e8b57;
+                else if (type.includes('wool')) color = 0xf5f5f5;
+                else if (type.includes('iron')) color = 0xdddddd;
+                else if (type.includes('stone') || type.includes('coal')) color = 0x555555;
+                else if (type.includes('wood') || type.includes('plank') || type.includes('stick')) color = 0xd2b48c;
+                
+                const mat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.7 });
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.16), mat);
+                mesh.castShadow = true;
+                group.add(mesh);
+            }
             
             return group;
         }
@@ -10213,15 +13881,18 @@ export function initNeonBruiser(): Cleanup {
             for (let i = 0; i < 9; i++) {
                 const item = hotbarItems[i];
                 const count = hotbarCounts[i];
+                const durability = hotbarDurability[i];
                 const isSelected = i === selectedHotbarIndex;
                 const iconUrl = item ? getItemIconDataURL(item) : '';
                 const name = item ? ITEM_NAMES[item] || '' : '';
                 const countStr = (count > 1) ? count : '';
+                const durabilityBar = getDurabilityBarHTML(item, durability);
                 
                 html += `
                     <div class="hotbar-slot ${isSelected ? 'selected' : ''}" onclick="selectHotbarSlot(${i})" title="${name}">
                         ${iconUrl ? `<img class="slot-icon-img" src="${iconUrl}" style="width: 36px; height: 36px; object-fit: contain;" />` : ''}
                         ${countStr ? `<span class="slot-count">${countStr}</span>` : ''}
+                        ${durabilityBar}
                     </div>
                 `;
             }
@@ -10245,13 +13916,16 @@ export function initNeonBruiser(): Cleanup {
             for (let i = 0; i < 27; i++) {
                 const item = inventoryItems[i];
                 const count = inventoryCounts[i];
+                const durability = inventoryDurability[i];
                 const iconUrl = item ? getItemIconDataURL(item) : '';
                 const name = item ? ITEM_NAMES[item] || '' : '';
                 const countStr = (count > 1) ? count : '';
+                const durabilityBar = getDurabilityBarHTML(item, durability);
                 gridHTML += `
                     <div class="hotbar-slot" onclick="onInventorySlotClick('inventory', ${i})" title="${name}">
                         ${iconUrl ? `<img class="slot-icon-img" src="${iconUrl}" style="width: 36px; height: 36px; object-fit: contain;" />` : ''}
                         ${countStr ? `<span class="slot-count">${countStr}</span>` : ''}
+                        ${durabilityBar}
                     </div>
                 `;
             }
@@ -10261,13 +13935,16 @@ export function initNeonBruiser(): Cleanup {
             for (let i = 0; i < 9; i++) {
                 const item = hotbarItems[i];
                 const count = hotbarCounts[i];
+                const durability = hotbarDurability[i];
                 const iconUrl = item ? getItemIconDataURL(item) : '';
                 const name = item ? ITEM_NAMES[item] || '' : '';
                 const countStr = (count > 1) ? count : '';
+                const durabilityBar = getDurabilityBarHTML(item, durability);
                 hotbarHTML += `
                     <div class="hotbar-slot" onclick="onInventorySlotClick('hotbar', ${i})" title="${name}">
                         ${iconUrl ? `<img class="slot-icon-img" src="${iconUrl}" style="width: 36px; height: 36px; object-fit: contain;" />` : ''}
                         ${countStr ? `<span class="slot-count">${countStr}</span>` : ''}
+                        ${durabilityBar}
                     </div>
                 `;
             }
@@ -10356,6 +14033,18 @@ export function initNeonBruiser(): Cleanup {
 
         const RECIPES = [
             {
+                id: 'campfire_coal',
+                name: 'Campfire (with Coal)',
+                inputs: [{ type: 'log', count: 3 }, { type: 'sticks', count: 3 }, { type: 'coal', count: 1 }],
+                outputs: [{ type: 'unlit_campfire', count: 1 }]
+            },
+            {
+                id: 'campfire_charcoal',
+                name: 'Campfire (with Charcoal)',
+                inputs: [{ type: 'log', count: 3 }, { type: 'sticks', count: 3 }, { type: 'charcoal', count: 1 }],
+                outputs: [{ type: 'unlit_campfire', count: 1 }]
+            },
+            {
                 id: 'planks',
                 name: 'Oak Planks (x4)',
                 inputs: [{ type: 'log', count: 1 }],
@@ -10390,6 +14079,240 @@ export function initNeonBruiser(): Cleanup {
                 name: 'Crafting Bench',
                 inputs: [{ type: 'planks', count: 4 }],
                 outputs: [{ type: 'crafting_bench', count: 1 }]
+            },
+            {
+                id: 'stone_sword',
+                name: 'Stone Sword (15 DMG)',
+                inputs: [{ type: 'sticks', count: 2 }, { type: 'stone', count: 2 }],
+                outputs: [{ type: 'stone_sword', count: 1 }]
+            },
+            {
+                id: 'stone_pickaxe',
+                name: 'Stone Pickaxe (11 DMG)',
+                inputs: [{ type: 'stone', count: 3 }, { type: 'sticks', count: 2 }],
+                outputs: [{ type: 'stone_pickaxe', count: 1 }]
+            },
+            {
+                id: 'stone_axe',
+                name: 'Stone Axe (13 DMG)',
+                inputs: [{ type: 'stone', count: 3 }, { type: 'sticks', count: 2 }],
+                outputs: [{ type: 'stone_axe', count: 1 }]
+            },
+            {
+                id: 'iron_sword',
+                name: 'Iron Sword (20 DMG)',
+                inputs: [{ type: 'sticks', count: 2 }, { type: 'iron_ingot', count: 2 }],
+                outputs: [{ type: 'iron_sword', count: 1 }]
+            },
+            {
+                id: 'iron_pickaxe',
+                name: 'Iron Pickaxe (14 DMG)',
+                inputs: [{ type: 'iron_ingot', count: 3 }, { type: 'sticks', count: 2 }],
+                outputs: [{ type: 'iron_pickaxe', count: 1 }]
+            },
+            {
+                id: 'iron_axe',
+                name: 'Iron Axe (16 DMG)',
+                inputs: [{ type: 'iron_ingot', count: 3 }, { type: 'sticks', count: 2 }],
+                outputs: [{ type: 'iron_axe', count: 1 }]
+            },
+            {
+                id: 'furnace',
+                name: 'Furnace',
+                inputs: [{ type: 'stone', count: 8 }],
+                outputs: [{ type: 'furnace', count: 1 }]
+            },
+            {
+                id: 'chest',
+                name: 'Chest',
+                inputs: [{ type: 'planks', count: 8 }],
+                outputs: [{ type: 'chest', count: 1 }]
+            },
+            {
+                id: 'stone_cutter',
+                name: 'Stone Cutter',
+                inputs: [{ type: 'stone', count: 3 }, { type: 'iron_ingot', count: 1 }],
+                outputs: [{ type: 'stone_cutter', count: 1 }]
+            },
+            {
+                id: 'door',
+                name: 'Wooden Door',
+                inputs: [{ type: 'planks', count: 6 }],
+                outputs: [{ type: 'door', count: 3 }]
+            },
+            {
+                id: 'ladder',
+                name: 'Ladder (x3)',
+                inputs: [{ type: 'sticks', count: 7 }],
+                outputs: [{ type: 'ladder', count: 3 }]
+            },
+            {
+                id: 'wooden_stairs',
+                name: 'Wooden Stairs (x4)',
+                inputs: [{ type: 'planks', count: 6 }],
+                outputs: [{ type: 'wooden_stairs', count: 4 }]
+            },
+            {
+                id: 'stone_stairs',
+                name: 'Stone Stairs (x4)',
+                inputs: [{ type: 'stone', count: 6 }],
+                outputs: [{ type: 'stone_stairs', count: 4 }]
+            },
+            {
+                id: 'stone_slab',
+                name: 'Stone Slab (x6)',
+                inputs: [{ type: 'stone', count: 3 }],
+                outputs: [{ type: 'stone_slab', count: 6 }]
+            },
+            {
+                id: 'bed',
+                name: 'Bed',
+                inputs: [{ type: 'planks', count: 3 }, { type: 'wool', count: 3 }],
+                outputs: [{ type: 'bed', count: 1 }]
+            },
+            {
+                id: 'bow',
+                name: 'Bow',
+                inputs: [{ type: 'sticks', count: 3 }, { type: 'wool', count: 3 }],
+                outputs: [{ type: 'bow', count: 1 }]
+            },
+            {
+                id: 'leather_helmet',
+                name: 'Leather Helmet',
+                inputs: [{ type: 'leather', count: 5 }],
+                outputs: [{ type: 'leather_helmet', count: 1 }]
+            },
+            {
+                id: 'leather_chestplate',
+                name: 'Leather Chestplate',
+                inputs: [{ type: 'leather', count: 8 }],
+                outputs: [{ type: 'leather_chestplate', count: 1 }]
+            },
+            {
+                id: 'leather_leggings',
+                name: 'Leather Leggings',
+                inputs: [{ type: 'leather', count: 7 }],
+                outputs: [{ type: 'leather_leggings', count: 1 }]
+            },
+            {
+                id: 'leather_boots',
+                name: 'Leather Boots',
+                inputs: [{ type: 'leather', count: 4 }],
+                outputs: [{ type: 'leather_boots', count: 1 }]
+            },
+            {
+                id: 'turtle_helmet',
+                name: 'Turtle Shell Helmet',
+                inputs: [{ type: 'turtle_shell', count: 5 }],
+                outputs: [{ type: 'turtle_helmet', count: 1 }]
+            },
+            {
+                id: 'turtle_chestplate',
+                name: 'Turtle Shell Chestplate',
+                inputs: [{ type: 'turtle_shell', count: 8 }],
+                outputs: [{ type: 'turtle_chestplate', count: 1 }]
+            },
+            {
+                id: 'turtle_leggings',
+                name: 'Turtle Shell Leggings',
+                inputs: [{ type: 'turtle_shell', count: 7 }],
+                outputs: [{ type: 'turtle_leggings', count: 1 }]
+            },
+            {
+                id: 'turtle_boots',
+                name: 'Turtle Shell Boots',
+                inputs: [{ type: 'turtle_shell', count: 4 }],
+                outputs: [{ type: 'turtle_boots', count: 1 }]
+            },
+            {
+                id: 'iron_helmet',
+                name: 'Iron Helmet',
+                inputs: [{ type: 'iron_ingot', count: 5 }],
+                outputs: [{ type: 'iron_helmet', count: 1 }]
+            },
+            {
+                id: 'iron_chestplate',
+                name: 'Iron Chestplate',
+                inputs: [{ type: 'iron_ingot', count: 8 }],
+                outputs: [{ type: 'iron_chestplate', count: 1 }]
+            },
+            {
+                id: 'iron_leggings',
+                name: 'Iron Leggings',
+                inputs: [{ type: 'iron_ingot', count: 7 }],
+                outputs: [{ type: 'iron_leggings', count: 1 }]
+            },
+            {
+                id: 'iron_boots',
+                name: 'Iron Boots',
+                inputs: [{ type: 'iron_ingot', count: 4 }],
+                outputs: [{ type: 'iron_boots', count: 1 }]
+            },
+            {
+                id: 'saddle',
+                name: 'Saddle',
+                inputs: [{ type: 'leather', count: 5 }, { type: 'iron_ingot', count: 1 }],
+                outputs: [{ type: 'saddle', count: 1 }]
+            },
+            {
+                id: 'wooden_shovel',
+                name: 'Wooden Shovel',
+                inputs: [{ type: 'planks', count: 1 }, { type: 'sticks', count: 2 }],
+                outputs: [{ type: 'wooden_shovel', count: 1 }]
+            },
+            {
+                id: 'stone_shovel',
+                name: 'Stone Shovel',
+                inputs: [{ type: 'stone', count: 1 }, { type: 'sticks', count: 2 }],
+                outputs: [{ type: 'stone_shovel', count: 1 }]
+            },
+            {
+                id: 'iron_shovel',
+                name: 'Iron Shovel',
+                inputs: [{ type: 'iron_ingot', count: 1 }, { type: 'sticks', count: 2 }],
+                outputs: [{ type: 'iron_shovel', count: 1 }]
+            },
+            {
+                id: 'copper_shovel',
+                name: 'Copper Shovel',
+                inputs: [{ type: 'copper_ingot', count: 1 }, { type: 'sticks', count: 2 }],
+                outputs: [{ type: 'copper_shovel', count: 1 }]
+            },
+            {
+                id: 'copper_sword',
+                name: 'Copper Sword (15 DMG)',
+                inputs: [{ type: 'sticks', count: 2 }, { type: 'copper_ingot', count: 2 }],
+                outputs: [{ type: 'copper_sword', count: 1 }]
+            },
+            {
+                id: 'copper_pickaxe',
+                name: 'Copper Pickaxe (11 DMG)',
+                inputs: [{ type: 'copper_ingot', count: 3 }, { type: 'sticks', count: 2 }],
+                outputs: [{ type: 'copper_pickaxe', count: 1 }]
+            },
+            {
+                id: 'copper_axe',
+                name: 'Copper Axe (13 DMG)',
+                inputs: [{ type: 'copper_ingot', count: 3 }, { type: 'sticks', count: 2 }],
+                outputs: [{ type: 'copper_axe', count: 1 }]
+            },
+            {
+                id: 'flint_and_steel',
+                name: 'Flint and Steel',
+                inputs: [{ type: 'flint', count: 1 }, { type: 'iron_ingot', count: 1 }],
+                outputs: [{ type: 'flint_and_steel', count: 1 }]
+            },
+            {
+                id: 'tnt',
+                name: 'TNT',
+                inputs: [{ type: 'gunpowder', count: 4 }, { type: 'sand', count: 4 }],
+                outputs: [{ type: 'tnt', count: 1 }]
+            },
+            {
+                id: 'boat',
+                name: 'Boat',
+                inputs: [{ type: 'planks', count: 5 }],
+                outputs: [{ type: 'boat', count: 1 }]
             }
         ];
 
@@ -10516,6 +14439,7 @@ export function initNeonBruiser(): Cleanup {
             let bestDist = Infinity;
             
             placedObjects.forEach(obj => {
+                if (obj.type === 'fire') return; // Cannot aim at/mine fire blocks
                 const ox = obj.pos.x;
                 const oy = obj.pos.y + 0.45;
                 const oz = obj.pos.z;
@@ -10540,6 +14464,7 @@ export function initNeonBruiser(): Cleanup {
         }
 
         function minePlacedObject(obj) {
+            if (obj.type === 'fire') return; // Cannot mine fire blocks
             if (obj.type === 'chest' && obj.chestInventoryItems) {
                 for (let i = 0; i < 27; i++) {
                     const itemType = obj.chestInventoryItems[i];
@@ -10553,6 +14478,14 @@ export function initNeonBruiser(): Cleanup {
                             )));
                         }
                     }
+                }
+            }
+            if (obj.type === 'bed' && respawnPoint) {
+                if (Math.abs(obj.pos.x - respawnPoint.x) < 0.1 &&
+                    Math.abs(obj.pos.y - respawnPoint.y) < 0.1 &&
+                    Math.abs(obj.pos.z - respawnPoint.z) < 0.1) {
+                    respawnPoint = null;
+                    addChatMessage("Respawn point reset to main spawn!", "system");
                 }
             }
             scene.remove(obj.mesh);
@@ -10570,6 +14503,7 @@ export function initNeonBruiser(): Cleanup {
                 });
             }
             addChatMessage(`Mined placed ${obj.type}!`, "system");
+            saveWorld(false);
         }
 
         function removePlacedBlockAt(x, y, z) {
@@ -10580,6 +14514,15 @@ export function initNeonBruiser(): Cleanup {
             });
             if (index !== -1) {
                 const obj = placedObjects[index];
+                if (obj.type === 'bed' && respawnPoint) {
+                    if (Math.abs(obj.pos.x - respawnPoint.x) < 0.1 &&
+                        Math.abs(obj.pos.y - respawnPoint.y) < 0.1 &&
+                        Math.abs(obj.pos.z - respawnPoint.z) < 0.1) {
+                        respawnPoint = null;
+                        addChatMessage("Respawn point reset to main spawn!", "system");
+                        saveWorld(false);
+                    }
+                }
                 scene.remove(obj.mesh);
                 placedObjects.splice(index, 1);
             }
@@ -10915,6 +14858,274 @@ export function initNeonBruiser(): Cleanup {
             } else if (type === 'crafting_bench') {
                 mesh = createCraftingBenchMesh();
                 mesh.position.copy(pos);
+            } else if (type === 'stone') {
+                const mat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.8 });
+                mesh = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.9), mat);
+                mesh.position.copy(pos);
+                mesh.position.y += 0.45;
+            } else if (type === 'smooth_stone') {
+                const mat = new THREE.MeshStandardMaterial({ color: 0xaaaaaa, roughness: 0.5 });
+                mesh = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.9), mat);
+                mesh.position.copy(pos);
+                mesh.position.y += 0.45;
+            } else if (type === 'unlit_campfire' || type === 'campfire') {
+                const group = new THREE.Group();
+                const logMat = new THREE.MeshStandardMaterial({ color: 0x5c4033, roughness: 0.9 });
+                
+                const log1 = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.7, 8), logMat);
+                log1.rotation.z = Math.PI / 2;
+                log1.rotation.y = Math.PI / 4;
+                log1.position.y = 0.08;
+                group.add(log1);
+                
+                const log2 = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.7, 8), logMat);
+                log2.rotation.z = Math.PI / 2;
+                log2.rotation.y = -Math.PI / 4;
+                log2.position.y = 0.08;
+                group.add(log2);
+
+                const coalMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.9 });
+                const coal = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.1, 0.15), coalMat);
+                coal.position.set(0, 0.1, 0);
+                group.add(coal);
+                
+                mesh = group;
+                mesh.position.copy(pos);
+            } else if (type === 'stone_cutter') {
+                const group = new THREE.Group();
+                const baseMat = new THREE.MeshStandardMaterial({ color: 0x666666, roughness: 0.8 });
+                const bladeMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.8, roughness: 0.2 });
+                const base = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.5, 0.9), baseMat);
+                base.position.y = 0.25;
+                group.add(base);
+                const blade = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.05, 16), bladeMat);
+                blade.rotation.x = Math.PI / 2;
+                blade.position.y = 0.55;
+                group.add(blade);
+                mesh = group;
+                mesh.position.copy(pos);
+            } else if (type === 'boat') {
+                const group = new THREE.Group();
+                const woodMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
+                const base = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.2, 0.7), woodMat);
+                base.position.y = 0.1;
+                group.add(base);
+                const left = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.4, 0.1), woodMat);
+                left.position.set(0, 0.2, 0.35);
+                group.add(left);
+                const right = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.4, 0.1), woodMat);
+                right.position.set(0, 0.2, -0.35);
+                group.add(right);
+                mesh = group;
+                mesh.position.copy(pos);
+            } else if (type === 'stone_stairs' || type === 'wooden_stairs') {
+                const group = new THREE.Group();
+                const mat = new THREE.MeshStandardMaterial({ color: type === 'stone_stairs' ? 0x888888 : 0xc49a6c, roughness: 0.8 });
+                const step1 = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.45, 0.9), mat);
+                step1.position.y = 0.225;
+                group.add(step1);
+                const step2 = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.45, 0.45), mat);
+                step2.position.set(0, 0.675, -0.225);
+                group.add(step2);
+                mesh = group;
+                mesh.position.copy(pos);
+            } else if (type === 'stone_slab') {
+                const mat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.8 });
+                mesh = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.45, 0.9), mat);
+                mesh.position.copy(pos);
+                mesh.position.y += 0.225;
+            } else if (type === 'door') {
+                const group = new THREE.Group();
+                const mat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
+                const panel = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.8, 0.1), mat);
+                panel.position.y = 0.9;
+                group.add(panel);
+                mesh = group;
+                mesh.position.copy(pos);
+            } else if (type === 'ladder') {
+                const group = new THREE.Group();
+                const woodMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
+                const leftRail = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.9, 8), woodMat);
+                leftRail.position.set(-0.3, 0.45, 0);
+                group.add(leftRail);
+                const rightRail = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.9, 8), woodMat);
+                rightRail.position.set(0.3, 0.45, 0);
+                group.add(rightRail);
+                for (let r = 0; r < 4; r++) {
+                    const rung = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.6, 8), woodMat);
+                    rung.rotation.z = Math.PI / 2;
+                    rung.position.set(0, 0.15 + r * 0.2, 0);
+                    group.add(rung);
+                }
+                mesh = group;
+                mesh.position.copy(pos);
+            } else if (type === 'furnace') {
+                mesh = createFurnaceMesh();
+                mesh.position.copy(pos);
+            } else if (type === 'chest') {
+                mesh = createChestMesh();
+                mesh.position.copy(pos);
+            } else if (type === 'fire') {
+                const group = new THREE.Group();
+                mesh = group;
+                mesh.position.copy(pos);
+                
+                if (isHost) {
+                    setTimeout(() => {
+                        const stillExists = placedObjects.some(obj => 
+                            obj.type === 'fire' &&
+                            Math.abs(obj.pos.x - pos.x) < 0.1 &&
+                            Math.abs(obj.pos.y - pos.y) < 0.1 &&
+                            Math.abs(obj.pos.z - pos.z) < 0.1
+                        );
+                        if (stillExists) {
+                            removePlacedBlockAt(pos.x, pos.y, pos.z);
+                            if (isConnected) {
+                                sendNetworkMessage({
+                                    type: 'break-block',
+                                    x: pos.x,
+                                    y: pos.y,
+                                    z: pos.z
+                                });
+                            }
+                            saveWorld(false);
+                        }
+                    }, 15000);
+                }
+            } else if (type === 'coral') {
+                const coralColors = [
+                    0xff007f, // Neon Pink
+                    0x00f0ff, // Neon Cyan
+                    0xffea00, // Neon Yellow
+                    0xff5e00, // Neon Orange
+                    0xaa00ff, // Neon Purple
+                    0xff00aa  // Magenta
+                ];
+                
+                const colorSeed = Math.floor(Math.abs(pos.x * 17 + pos.y * 31 + pos.z * 13));
+                const coralColor = coralColors[colorSeed % coralColors.length];
+                const coralType = colorSeed % 3;
+                
+                const coralMat = new THREE.MeshStandardMaterial({
+                    color: coralColor,
+                    roughness: 0.9,
+                    emissive: coralColor,
+                    emissiveIntensity: 0.15
+                });
+                
+                const coralGroup = new THREE.Group();
+                
+                if (coralType === 0) {
+                    const numTubes = 3 + (colorSeed % 3);
+                    for (let j = 0; j < numTubes; j++) {
+                        const th = 0.5 + ((colorSeed + j) % 10) * 0.08;
+                        const tr = 0.1 + ((colorSeed + j) % 5) * 0.02;
+                        const tube = new THREE.Mesh(new THREE.CylinderGeometry(tr, tr, th, 8), coralMat);
+                        
+                        const offsetX = (((colorSeed + j * 7) % 7) - 3) * 0.07;
+                        const offsetZ = (((colorSeed + j * 13) % 7) - 3) * 0.07;
+                        
+                        tube.position.set(offsetX, th/2, offsetZ);
+                        tube.rotation.x = (((colorSeed + j * 3) % 5) - 2) * 0.06;
+                        tube.rotation.z = (((colorSeed + j * 9) % 5) - 2) * 0.06;
+                        tube.castShadow = true;
+                        coralGroup.add(tube);
+                    }
+                } else if (coralType === 1) {
+                    const baseGeo = new THREE.SphereGeometry(0.35, 8, 8);
+                    const baseMesh = new THREE.Mesh(baseGeo, coralMat);
+                    baseMesh.position.y = 0.25;
+                    baseMesh.scale.set(1.2, 0.8, 1.2);
+                    baseMesh.castShadow = true;
+                    coralGroup.add(baseMesh);
+                    
+                    const numBubbles = 4 + (colorSeed % 4);
+                    for (let j = 0; j < numBubbles; j++) {
+                        const radius = 0.15 + ((colorSeed + j) % 5) * 0.02;
+                        const bub = new THREE.Mesh(new THREE.SphereGeometry(radius, 8, 8), coralMat);
+                        
+                        const offsetX = (((colorSeed + j * 3) % 9) - 4) * 0.06;
+                        const offsetY = 0.25 + (((colorSeed + j * 7) % 5) - 2) * 0.05;
+                        const offsetZ = (((colorSeed + j * 11) % 9) - 4) * 0.06;
+                        
+                        bub.position.set(offsetX, offsetY, offsetZ);
+                        bub.castShadow = true;
+                        coralGroup.add(bub);
+                    }
+                } else {
+                    const baseMesh = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.6, 0.2), coralMat);
+                    baseMesh.position.y = 0.3;
+                    baseMesh.castShadow = true;
+                    coralGroup.add(baseMesh);
+                    
+                    const numPlates = 2 + (colorSeed % 3);
+                    for (let j = 0; j < numPlates; j++) {
+                        const plateWidthX = 0.6 + ((colorSeed + j * 5) % 5) * 0.08;
+                        const plateWidthZ = 0.6 + ((colorSeed + j * 7) % 5) * 0.08;
+                        const plate = new THREE.Mesh(new THREE.BoxGeometry(plateWidthX, 0.08, plateWidthZ), coralMat);
+                        
+                        const offsetX = (((colorSeed + j * 3) % 5) - 2) * 0.04;
+                        const offsetZ = (((colorSeed + j * 13) % 5) - 2) * 0.04;
+                        
+                        plate.position.set(offsetX, 0.2 + j * 0.25, offsetZ);
+                        plate.rotation.z = (((colorSeed + j * 9) % 9) - 4) * 0.05;
+                        plate.rotation.x = (((colorSeed + j * 17) % 9) - 4) * 0.05;
+                        plate.castShadow = true;
+                        coralGroup.add(plate);
+                    }
+                }
+                
+                mesh = coralGroup;
+                mesh.position.copy(pos);
+            } else if (type === 'sand') {
+                const mat = new THREE.MeshStandardMaterial({ color: 0xdfd5a2, roughness: 0.9 });
+                mesh = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.9), mat);
+                mesh.position.copy(pos);
+                mesh.position.y += 0.45;
+            } else if (type === 'tnt') {
+                const group = new THREE.Group();
+                const redMat = new THREE.MeshStandardMaterial({ color: 0xcc2222, roughness: 0.8 });
+                const whiteMat = new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.8 });
+                const tntBody = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.9), redMat);
+                tntBody.position.y = 0.45;
+                group.add(tntBody);
+                
+                const tntBand = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.2, 0.92), whiteMat);
+                tntBand.position.y = 0.45;
+                group.add(tntBand);
+                
+                mesh = group;
+                mesh.position.copy(pos);
+
+                if (isHost) {
+                    setTimeout(() => {
+                        const stillExists = placedObjects.some(obj => 
+                            obj.type === 'tnt' &&
+                            Math.abs(obj.pos.x - pos.x) < 0.1 &&
+                            Math.abs(obj.pos.y - pos.y) < 0.1 &&
+                            Math.abs(obj.pos.z - pos.z) < 0.1
+                        );
+                        if (stillExists) {
+                            createExplosionEffect(pos.x, pos.y + 0.45, pos.z, 12.0, 60.0, false);
+                            removePlacedBlockAt(pos.x, pos.y, pos.z);
+                            if (isConnected) {
+                                sendNetworkMessage({
+                                    type: 'break-block',
+                                    x: pos.x,
+                                    y: pos.y,
+                                    z: pos.z
+                                });
+                                sendNetworkMessage({
+                                    type: 'tnt-explode',
+                                    x: pos.x,
+                                    y: pos.y + 0.45,
+                                    z: pos.z
+                                });
+                            }
+                            saveWorld(false);
+                        }
+                    }, 5000);
+                }
             }
             
             if (mesh) {
@@ -10928,11 +15139,28 @@ export function initNeonBruiser(): Cleanup {
                 });
                 scene.add(mesh);
                 
-                placedObjects.push({
+                mesh.visible = true; // initially visible when placed
+                const newObj = {
                     type: type,
                     mesh: mesh,
-                    pos: pos.clone()
-                });
+                    pos: pos.clone(),
+                    inCave: isDimensionCave(playerInCave),
+                    initialRotationY: mesh.rotation.y,
+                    burnTimeLeft: type === 'campfire' ? 60.0 : 0
+                };
+                placedObjects.push(newObj);
+                if (type === 'bed') {
+                    respawnPoint = {
+                        x: pos.x,
+                        y: pos.y,
+                        z: pos.z,
+                        inCave: isDimensionCave(playerInCave)
+                    };
+                    addChatMessage("Respawn point set to placed bed!", "system");
+                }
+                if (type === 'campfire' || type === 'fire') {
+                    addCampfireFireMesh(newObj);
+                }
                 
                 if (sendNetwork && isConnected) {
                     sendNetworkMessage({
@@ -10940,15 +15168,61 @@ export function initNeonBruiser(): Cleanup {
                         blockType: type,
                         x: pos.x,
                         y: pos.y,
-                        z: pos.z
+                        z: pos.z,
+                        inCave: isDimensionCave(playerInCave)
                     });
                 }
+                return newObj;
             }
+            return null;
+        }
+
+        function updatePlacementPreview() {
+            if (!placementPreview) return;
+            const item = hotbarItems[selectedHotbarIndex];
+            const placeableItems = ['log', 'planks', 'crafting_bench', 'stone', 'smooth_stone', 'stone_cutter', 'boat', 'stone_stairs', 'stone_slab', 'wooden_stairs', 'door', 'ladder', 'wool', 'bed', 'furnace', 'chest', 'coral', 'sand', 'tnt', 'unlit_campfire'];
+            if (!item || !placeableItems.includes(item)) {
+                placementPreview.visible = false;
+                return;
+            }
+            const placePos = getGroundIntersectPoint(6.0);
+            if (!placePos) {
+                placementPreview.visible = false;
+                return;
+            }
+            const widthX = (item === 'crafting_bench') ? 1.6 : ((item === 'chest' || item === 'bed') ? 0.8 : ((item === 'unlit_campfire') ? 0.7 : 0.9));
+            const widthZ = (item === 'crafting_bench') ? 0.7 : ((item === 'chest' || item === 'bed') ? 0.8 : ((item === 'unlit_campfire') ? 0.7 : 0.9));
+            const height = (item === 'crafting_bench') ? 1.0 : (item === 'door' ? 1.8 : ((item === 'stone_slab' || item === 'bed') ? 0.45 : ((item === 'unlit_campfire') ? 0.25 : 0.9)));
+            placementPreview.scale.set(widthX, height, widthZ);
+            placementPreview.position.set(placePos.x, placePos.y + height / 2, placePos.z);
+            placementPreview.visible = true;
+        }
+
+        function igniteTnt(tntObj) {
+            const pos = tntObj.pos;
+            createExplosionEffect(pos.x, pos.y + 0.45, pos.z, 12.0, 60.0, false);
+            removePlacedBlockAt(pos.x, pos.y, pos.z);
+            if (isConnected) {
+                sendNetworkMessage({
+                    type: 'break-block',
+                    x: pos.x,
+                    y: pos.y,
+                    z: pos.z
+                });
+                sendNetworkMessage({
+                    type: 'tnt-explode',
+                    x: pos.x,
+                    y: pos.y + 0.45,
+                    z: pos.z
+                });
+            }
+            saveWorld(false);
         }
 
         function tryPlaceBlock() {
             const item = hotbarItems[selectedHotbarIndex];
-            if (!item || !['log', 'planks', 'crafting_bench'].includes(item)) return false;
+            const placeableItems = ['log', 'planks', 'crafting_bench', 'stone', 'smooth_stone', 'stone_cutter', 'boat', 'stone_stairs', 'stone_slab', 'wooden_stairs', 'door', 'ladder', 'wool', 'bed', 'furnace', 'chest', 'coral', 'sand', 'tnt', 'unlit_campfire'];
+            if (!item || !placeableItems.includes(item)) return false;
             
             const placePos = getGroundIntersectPoint(6.0);
             if (!placePos) return false;
@@ -10963,6 +15237,7 @@ export function initNeonBruiser(): Cleanup {
             
             spawnPlacedObject(item, placePos, true);
             AudioSynth.playHit(placePos);
+            saveWorld(false);
             return true;
         }
 
@@ -11095,8 +15370,9 @@ export function initNeonBruiser(): Cleanup {
                         
                         // Set local player on fire
                         if (setFire) {
-                            myBurnTime = 10;
-                            sendNetworkMessage({ type: 'fire-state', burning: true });
+                            // Player cannot go on fire
+                            // myBurnTime = 10;
+                            // sendNetworkMessage({ type: 'fire-state', burning: true });
                         }
                         
                         takeDamage(dmg, kDir.x * knockbackPower, kDir.y * knockbackPower, "Killed by Explosion!");
@@ -11152,6 +15428,7 @@ export function initNeonBruiser(): Cleanup {
                             if (z.health <= 0) {
                                 z.isDead = true;
                                 z.deathTime = 0;
+                                handleZombieDeathDrops(z);
                             }
                         }
                     }
@@ -11205,6 +15482,505 @@ export function initNeonBruiser(): Cleanup {
                     }
                 }
             }
+        }
+
+        // --- CRAWLING TREES SECTION ---
+        function createCrawlingTreeMesh() {
+            const treeGroup = new THREE.Group();
+            treeGroup.zombieType = 'crawling_tree';
+            
+            const pineFoliageMat = new THREE.MeshStandardMaterial({ color: 0x0f3b1e, roughness: 0.8 });
+            const pineTrunkGeo = new THREE.CylinderGeometry(0.2, 0.3, 3.5, 8);
+            const pineTrunkMat = new THREE.MeshStandardMaterial({ color: 0x3d2314, roughness: 0.9 });
+            
+            // Trunk
+            const trunk = new THREE.Mesh(pineTrunkGeo, pineTrunkMat);
+            trunk.position.y = 1.75;
+            trunk.castShadow = true;
+            treeGroup.add(trunk);
+            
+            // Leaves (cones)
+            const leaves = [];
+            for (let j = 0; j < 3; j++) {
+                const leaf = new THREE.Mesh(new THREE.ConeGeometry(1.6 - j * 0.4, 2.2, 8), pineFoliageMat);
+                leaf.position.y = 3.0 + j * 1.3;
+                leaf.castShadow = true;
+                treeGroup.add(leaf);
+                leaves.push(leaf);
+            }
+            
+            // 4 Crawling Legs
+            const legMat = new THREE.MeshStandardMaterial({ color: 0x2d170b, roughness: 0.9 }); // slightly darker wood
+            const legGeo = new THREE.BoxGeometry(0.15, 0.8, 0.15);
+            
+            // Front-Left Leg
+            const legFL = new THREE.Mesh(legGeo, legMat);
+            legFL.position.set(-0.35, 0.4, 0.35);
+            legFL.castShadow = true;
+            treeGroup.add(legFL);
+            
+            // Front-Right Leg
+            const legFR = new THREE.Mesh(legGeo, legMat);
+            legFR.position.set(0.35, 0.4, 0.35);
+            legFR.castShadow = true;
+            treeGroup.add(legFR);
+            
+            // Back-Left Leg
+            const legBL = new THREE.Mesh(legGeo, legMat);
+            legBL.position.set(-0.35, 0.4, -0.35);
+            legBL.castShadow = true;
+            treeGroup.add(legBL);
+            
+            // Back-Right Leg
+            const legBR = new THREE.Mesh(legGeo, legMat);
+            legBR.position.set(0.35, 0.4, -0.35);
+            legBR.castShadow = true;
+            treeGroup.add(legBR);
+            
+            // Initialize legs as invisible (standing state)
+            legFL.visible = false;
+            legFR.visible = false;
+            legBL.visible = false;
+            legBR.visible = false;
+            
+            // Store references in userData
+            treeGroup.userData = {
+                type: 'crawling_tree',
+                trunk: trunk,
+                leaves: leaves,
+                legFL: legFL,
+                legFR: legFR,
+                legBL: legBL,
+                legBR: legBR
+            };
+            
+            return treeGroup;
+        }
+
+        function spawnCrawlingTrees() {
+            // Define 12 coordinates around spawn (60, 20)
+            const coords = [
+                { x: 45, z: 10 },
+                { x: 75, z: 15 },
+                { x: 52, z: 38 },
+                { x: 65, z: -5 },
+                { x: 80, z: 5 },
+                { x: 40, z: 25 },
+                { x: 35, z: 15 },
+                { x: 85, z: 25 },
+                { x: 50, z: -10 },
+                { x: 70, z: 40 },
+                { x: 30, z: 30 },
+                { x: 85, z: -5 }
+            ];
+            
+            coords.forEach((c, idx) => {
+                const tx = c.x;
+                const tz = c.z;
+                const ty = getTerrainHeight(tx, tz, false);
+                if (ty <= WATER_Y) return;
+                
+                const id = `crawling_tree_${idx}`;
+                // Avoid duplicating if already exists
+                if (zombies.some(z => z.id === id)) return;
+                
+                const mesh = createCrawlingTreeMesh();
+                mesh.zombieType = 'crawling_tree';
+                mesh.position.set(tx, ty, tz);
+                scene.add(mesh);
+                
+                zombies.push({
+                    id: id,
+                    mesh: mesh,
+                    type: 'crawling_tree',
+                    x: tx,
+                    y: ty,
+                    z: tz,
+                    startX: tx,
+                    startY: ty,
+                    startZ: tz,
+                    inCave: false,
+                    chunkKey: 'spawn_island',
+                    ry: 0,
+                    lastAttackTime: 0,
+                    isAttacking: false,
+                    attackAnimTime: 0,
+                    health: 99999, // Unkillable
+                    burnTime: 0,
+                    kx: 0,
+                    kz: 0,
+                    isDead: false,
+                    deathTime: 0,
+                    
+                    // Crawling tree state machine
+                    state: 'standing',
+                    stateTime: 0,
+                    chaseDuration: 15,
+                    attackAnimProgress: 0
+                });
+            });
+        }
+
+        function animateCrawlingTreeMesh(mesh, state, attackAnimProgress, delta, now) {
+            const { legFL, legFR, legBL, legBR, trunk, leaves } = mesh.userData;
+            if (!legFL) return;
+            
+            if (state === 'standing') {
+                legFL.visible = false;
+                legFR.visible = false;
+                legBL.visible = false;
+                legBR.visible = false;
+                
+                legFL.scale.set(0.01, 0.01, 0.01);
+                legFR.scale.set(0.01, 0.01, 0.01);
+                legBL.scale.set(0.01, 0.01, 0.01);
+                legBR.scale.set(0.01, 0.01, 0.01);
+                
+                legFL.position.y = 0;
+                legFR.position.y = 0;
+                legBL.position.y = 0;
+                legBR.position.y = 0;
+
+                legFL.rotation.set(0, 0, 0);
+                legFR.rotation.set(0, 0, 0);
+                legBL.rotation.set(0, 0, 0);
+                legBR.rotation.set(0, 0, 0);
+                
+                // Shake check: determine if mimic tree should shiver/rustle leaves
+                const px = mesh.position.x;
+                const pz = mesh.position.z;
+                // Deterministic pseudo-random seed based on coordinates so they don't shake in sync
+                const timeOffset = Math.abs(Math.sin(px * 12.9898 + pz * 78.233)) * 100000;
+                const cycle = 6000 + (timeOffset % 3000); // 6 to 9 seconds cycle (slightly more frequent)
+                const t = (now + timeOffset) % cycle;
+                const shakeDuration = 1800; // Shakes for 1.8 seconds out of the cycle
+                
+                if (t < shakeDuration) {
+                    const progress = t / shakeDuration;
+                    const intensity = Math.sin(progress * Math.PI); // Fade in and out shake intensity
+                    
+                    // Shiver/tilt the entire tree mesh (amplified to be clearly visible)
+                    mesh.rotation.z = Math.sin(now * 0.06) * 0.045 * intensity;
+                    mesh.rotation.x = Math.cos(now * 0.055) * 0.045 * intensity;
+                    trunk.position.y = 1.75;
+                    trunk.rotation.set(0, 0, 0);
+                    
+                    // Shake the leaves (rustle them dynamically)
+                    if (leaves) {
+                        leaves.forEach((leaf, idx) => {
+                            const phase = idx * 1.5;
+                            leaf.rotation.z = Math.sin(now * 0.08 + phase) * 0.16 * intensity;
+                            leaf.rotation.x = Math.cos(now * 0.075 + phase) * 0.12 * intensity;
+                            leaf.position.x = Math.sin(now * 0.09 + phase) * 0.12 * intensity;
+                            leaf.position.z = Math.cos(now * 0.085 + phase) * 0.12 * intensity;
+                        });
+                    }
+                } else {
+                    mesh.rotation.x = 0;
+                    mesh.rotation.z = 0;
+                    trunk.position.y = 1.75;
+                    trunk.rotation.set(0, 0, 0);
+                    
+                    if (leaves) {
+                        leaves.forEach((leaf) => {
+                            leaf.rotation.x = 0;
+                            leaf.rotation.z = 0;
+                            leaf.position.x = 0;
+                            leaf.position.z = 0;
+                        });
+                    }
+                }
+            } else if (state === 'rising') {
+                legFL.visible = true;
+                legFR.visible = true;
+                legBL.visible = true;
+                legBR.visible = true;
+                
+                const scale = Math.min(1.0, (legFL.scale.x + delta * 2.0));
+                legFL.scale.set(scale, scale, scale);
+                legFR.scale.set(scale, scale, scale);
+                legBL.scale.set(scale, scale, scale);
+                legBR.scale.set(scale, scale, scale);
+                
+                legFL.position.y = 0.4 * scale;
+                legFR.position.y = 0.4 * scale;
+                legBL.position.y = 0.4 * scale;
+                legBR.position.y = 0.4 * scale;
+
+                // Angling them outwards
+                legFL.rotation.set(0.2, 0, -0.2);
+                legFR.rotation.set(0.2, 0, 0.2);
+                legBL.rotation.set(-0.2, 0, -0.2);
+                legBR.rotation.set(-0.2, 0, 0.2);
+                
+                mesh.rotation.z = Math.sin(now * 0.05) * 0.08;
+                mesh.rotation.x = Math.cos(now * 0.05) * 0.08;
+
+                if (leaves) {
+                    leaves.forEach((leaf, idx) => {
+                        const phase = idx * 1.2;
+                        leaf.rotation.z = Math.sin(now * 0.08 + phase) * 0.08;
+                        leaf.rotation.x = Math.cos(now * 0.08 + phase) * 0.08;
+                        leaf.position.x = Math.sin(now * 0.08 + phase) * 0.03;
+                        leaf.position.z = Math.cos(now * 0.08 + phase) * 0.03;
+                    });
+                }
+            } else if (state === 'chasing') {
+                legFL.visible = true;
+                legFR.visible = true;
+                legBL.visible = true;
+                legBR.visible = true;
+                
+                legFL.scale.set(1.0, 1.0, 1.0);
+                legFR.scale.set(1.0, 1.0, 1.0);
+                legBL.scale.set(1.0, 1.0, 1.0);
+                legBR.scale.set(1.0, 1.0, 1.0);
+                
+                legFL.position.y = 0.4;
+                legFR.position.y = 0.4;
+                legBL.position.y = 0.4;
+                legBR.position.y = 0.4;
+
+                // Crawling leg animation: alternate rotation
+                const angle = Math.sin(now * 0.015) * 0.5;
+                legFL.rotation.x = 0.2 + angle;
+                legBR.rotation.x = -0.2 + angle;
+                legFR.rotation.x = 0.2 - angle;
+                legBL.rotation.x = -0.2 - angle;
+                
+                legFL.rotation.z = -0.2;
+                legFR.rotation.z = 0.2;
+                legBL.rotation.z = -0.2;
+                legBR.rotation.z = 0.2;
+                
+                trunk.position.y = 1.75 + Math.abs(Math.sin(now * 0.015)) * 0.15;
+                mesh.rotation.x = 0;
+                mesh.rotation.z = 0;
+
+                if (leaves) {
+                    leaves.forEach((leaf, idx) => {
+                        const phase = idx * 1.0;
+                        leaf.rotation.z = Math.sin(now * 0.015 + phase) * 0.05;
+                        leaf.rotation.x = Math.cos(now * 0.015 + phase) * 0.03 - 0.05; // slightly lean back from velocity
+                        leaf.position.x = Math.sin(now * 0.015 + phase) * 0.02;
+                        leaf.position.z = 0;
+                    });
+                }
+            } else if (state === 'attacking') {
+                legFL.visible = true;
+                legFR.visible = true;
+                legBL.visible = true;
+                legBR.visible = true;
+                
+                legFL.position.y = 0.4;
+                legFR.position.y = 0.4;
+                legBL.position.y = 0.4;
+                legBR.position.y = 0.4;
+
+                const tilt = Math.sin(attackAnimProgress * Math.PI) * 0.8;
+                mesh.rotation.x = tilt; // Tilt entire tree forward
+                
+                legFL.rotation.set(0.2, 0, -0.2);
+                legFR.rotation.set(0.2, 0, 0.2);
+                legBL.rotation.set(-0.2, 0, -0.2);
+                legBR.rotation.set(-0.2, 0, 0.2);
+
+                if (leaves) {
+                    leaves.forEach((leaf, idx) => {
+                        // Lag behind the swing tilt dynamically
+                        leaf.rotation.x = -tilt * 0.2 * (idx + 1);
+                        leaf.rotation.z = 0;
+                        leaf.position.x = 0;
+                        leaf.position.z = 0;
+                    });
+                }
+            } else if (state === 'burrowing') {
+                legFL.visible = true;
+                legFR.visible = true;
+                legBL.visible = true;
+                legBR.visible = true;
+                
+                const scale = Math.max(0.01, (legFL.scale.x - delta * 2.0));
+                legFL.scale.set(scale, scale, scale);
+                legFR.scale.set(scale, scale, scale);
+                legBL.scale.set(scale, scale, scale);
+                legBR.scale.set(scale, scale, scale);
+                
+                legFL.position.y = 0.4 * scale;
+                legFR.position.y = 0.4 * scale;
+                legBL.position.y = 0.4 * scale;
+                legBR.position.y = 0.4 * scale;
+
+                mesh.rotation.z = Math.sin(now * 0.05) * 0.08;
+                mesh.rotation.x = Math.cos(now * 0.05) * 0.08;
+
+                if (leaves) {
+                    leaves.forEach((leaf, idx) => {
+                        const phase = idx * 1.2;
+                        leaf.rotation.z = Math.sin(now * 0.08 + phase) * 0.08;
+                        leaf.rotation.x = Math.cos(now * 0.08 + phase) * 0.08;
+                        leaf.position.x = Math.sin(now * 0.08 + phase) * 0.03;
+                        leaf.position.z = Math.cos(now * 0.08 + phase) * 0.03;
+                    });
+                }
+            }
+        }
+
+        function spawnDirtParticles(position, count = 12) {
+            for (let i = 0; i < count; i++) {
+                const size = 0.08 + Math.random() * 0.15;
+                const geo = new THREE.BoxGeometry(size, size, size);
+                const mat = new THREE.MeshBasicMaterial({
+                    color: Math.random() > 0.4 ? 0x4e3629 : 0x1e3f20, // brown or dark green
+                    transparent: true,
+                    opacity: 0.95
+                });
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.position.copy(position);
+                mesh.position.x += (Math.random() - 0.5) * 1.5;
+                mesh.position.y += (Math.random() - 0.5) * 0.5 + 0.2;
+                mesh.position.z += (Math.random() - 0.5) * 1.5;
+                
+                scene.add(mesh);
+                
+                eatingParticles.push({
+                    mesh: mesh,
+                    mat: mat,
+                    velX: (Math.random() - 0.5) * 1.2,
+                    velY: 1.0 + Math.random() * 2.0,
+                    velZ: (Math.random() - 0.5) * 1.2,
+                    life: 0.5 + Math.random() * 0.5
+                });
+            }
+        }
+
+        function updateCrawlingTree(z, delta, now) {
+            z.mesh.visible = (isDimensionCave(z.inCave) === isDimensionCave(playerInCave));
+            
+            // Apply knockback velocities (reset immediately to prevent floating/sliding)
+            z.kx = 0;
+            z.kz = 0;
+
+            // Target Selection (nearest of Host, Opponent)
+            const px = camera.position.x;
+            const pz = camera.position.z;
+            
+            let targetX = px;
+            let targetZ = pz;
+            let targetType = 'host';
+            let minDist = Infinity;
+            
+            const canTargetHost = myHealth > 0 && !inBush;
+            if (canTargetHost) {
+                minDist = Math.sqrt(Math.pow(z.mesh.position.x - px, 2) + Math.pow(z.mesh.position.z - pz, 2));
+            }
+            
+            if (opponentGroup && oppHealth > 0 && isConnected && !opponentInvisible && !opponentInCave) {
+                const ox = opponentGroup.position.x;
+                const oz = opponentGroup.position.z;
+                const distToClient = Math.sqrt(Math.pow(z.mesh.position.x - ox, 2) + Math.pow(z.mesh.position.z - oz, 2));
+                if (distToClient < minDist) {
+                    minDist = distToClient;
+                    targetX = ox;
+                    targetZ = oz;
+                    targetType = 'client';
+                }
+            }
+            
+            // State Machine Update
+            z.stateTime += delta;
+            
+            if (z.state === 'standing') {
+                if (minDist < 8.0) {
+                    z.state = 'rising';
+                    z.stateTime = 0;
+                    spawnDirtParticles(z.mesh.position, 12);
+                    AudioSynth.playClack(z.mesh.position);
+                }
+            } else if (z.state === 'rising') {
+                if (z.stateTime >= 1.0) {
+                    z.state = 'chasing';
+                    z.stateTime = 0;
+                    z.chaseDuration = 10.0 + Math.random() * 10.0;
+                }
+            } else if (z.state === 'chasing') {
+                const dx = targetX - z.mesh.position.x;
+                const dz = targetZ - z.mesh.position.z;
+                const dist = Math.sqrt(dx * dx + dz * dz);
+                
+                if (dist > 0.1 && minDist !== Infinity) {
+                    const speed = 3.8;
+                    const vx = (dx / dist) * speed;
+                    const vz = (dz / dist) * speed;
+                    
+                    z.mesh.position.x += vx * delta;
+                    z.mesh.position.z += vz * delta;
+                    z.mesh.position.y = getTerrainHeight(z.mesh.position.x, z.mesh.position.z, false);
+                    
+                    z.ry = Math.atan2(dx, dz);
+                    z.mesh.rotation.y = z.ry;
+                }
+                
+                // Attack range check (2.5 meters)
+                if (dist < 2.5 && now - z.lastAttackTime > 1500 && minDist !== Infinity) {
+                    z.state = 'attacking';
+                    z.stateTime = 0;
+                    z.attackAnimProgress = 0;
+                    z.lastAttackTime = now;
+                    
+                    // Deal damage and knockback
+                    const kx = (targetX - z.mesh.position.x);
+                    const kz = (targetZ - z.mesh.position.z);
+                    const kLen = Math.sqrt(kx * kx + kz * kz);
+                    const force = 12.0;
+                    const kxNorm = kLen > 0 ? (kx / kLen) * force : 0;
+                    const kzNorm = kLen > 0 ? (kz / kLen) * force : 0;
+                    
+                    if (targetType === 'host') {
+                        takeDamage(23, kxNorm, kzNorm, "Smacked by a Crawling Tree!");
+                    } else if (targetType === 'client') {
+                        sendNetworkMessage({
+                            type: 'zombie-hit',
+                            damage: 23,
+                            kx: kxNorm,
+                            kz: kzNorm,
+                            reason: "Smacked by a Crawling Tree!"
+                        });
+                    }
+                }
+                
+                if (z.stateTime >= z.chaseDuration) {
+                    z.state = 'burrowing';
+                    z.stateTime = 0;
+                    spawnDirtParticles(z.mesh.position, 8);
+                }
+            } else if (z.state === 'attacking') {
+                z.attackAnimProgress += delta * 2.5;
+                if (z.attackAnimProgress >= 1.0) {
+                    z.state = 'chasing';
+                    z.stateTime = 0;
+                    z.attackAnimProgress = 0;
+                }
+            } else if (z.state === 'burrowing') {
+                z.mesh.position.y = getTerrainHeight(z.mesh.position.x, z.mesh.position.z, false);
+                
+                if (z.stateTime >= 1.5) {
+                    z.startX = z.mesh.position.x;
+                    z.startY = z.mesh.position.y;
+                    z.startZ = z.mesh.position.z;
+                    z.mesh.rotation.set(0, 0, 0);
+                    z.ry = 0;
+                    z.state = 'standing';
+                    z.stateTime = 0;
+                    spawnDirtParticles(z.mesh.position, 10);
+                }
+            }
+            
+            z.x = z.mesh.position.x;
+            z.y = z.mesh.position.y;
+            z.z = z.mesh.position.z;
+            
+            animateCrawlingTreeMesh(z.mesh, z.state, z.attackAnimProgress, delta, now);
         }
 
         // --- ZOMBIES SECTION ---
@@ -11534,37 +16310,99 @@ export function initNeonBruiser(): Cleanup {
                 const id = Math.random().toString(36).substr(2, 6);
                 let zx, zz;
                 
-                // Spawn in different quadrants
-                const rand = Math.random();
-                if (rand < 0.25) {
-                    zx = 20 + Math.random() * 80;
-                    zz = -40 + Math.random() * 80;
-                } else if (rand < 0.5) {
-                    zx = -100 + Math.random() * 70;
-                    zz = 20 + Math.random() * 80;
-                } else if (rand < 0.75) {
-                    zx = -90 + Math.random() * 50;
-                    zz = -90 + Math.random() * 50;
-                } else {
-                    zx = 40 + Math.random() * 60;
-                    zz = 40 + Math.random() * 60;
+                // Check if player or opponent is in the desert biome
+                let playerNearDesert = false;
+                let targetX = 350;
+                let targetZ = -350;
+                
+                const distHost = Math.sqrt(Math.pow(camera.position.x - 350, 2) + Math.pow(camera.position.z + 350, 2));
+                const hostInDesert = (!playerInCave && distHost < 180);
+                const oppInDesert = (isConnected && opponentGroup && !opponentInCave && 
+                    Math.sqrt(Math.pow(opponentGroup.position.x - 350, 2) + Math.pow(opponentGroup.position.z + 350, 2)) < 180);
+                
+                if (hostInDesert) {
+                    targetX = camera.position.x;
+                    targetZ = camera.position.z;
+                    playerNearDesert = true;
+                } else if (oppInDesert) {
+                    targetX = opponentGroup.position.x;
+                    targetZ = opponentGroup.position.z;
+                    playerNearDesert = true;
                 }
+                
+                let spawnedInDesert = false;
+                
+                if (playerNearDesert) {
+                    let attempts = 0;
+                    while (attempts < 15) {
+                        const angle = Math.random() * Math.PI * 2;
+                        const dist = 25 + Math.random() * 45; // 25m to 70m from player
+                        const tx = targetX + Math.cos(angle) * dist;
+                        const tz = targetZ + Math.sin(angle) * dist;
+                        const dDesert = Math.sqrt(Math.pow(tx - 350, 2) + Math.pow(tz + 350, 2));
+                        if (dDesert < 160) {
+                            zx = tx;
+                            zz = tz;
+                            spawnedInDesert = true;
+                            break;
+                        }
+                        attempts++;
+                    }
+                }
+                
+                // baseline 10% chance to spawn in the desert anyway
+                if (!spawnedInDesert && Math.random() < 0.10) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = Math.random() * 150;
+                    zx = 350 + Math.cos(angle) * dist;
+                    zz = -350 + Math.sin(angle) * dist;
+                    spawnedInDesert = true;
+                }
+                
+                if (!spawnedInDesert) {
+                    // Spawn in different quadrants
+                    const rand = Math.random();
+                    if (rand < 0.25) {
+                        zx = 20 + Math.random() * 80;
+                        zz = -40 + Math.random() * 80;
+                    } else if (rand < 0.5) {
+                        zx = -100 + Math.random() * 70;
+                        zz = 20 + Math.random() * 80;
+                    } else if (rand < 0.75) {
+                        zx = -90 + Math.random() * 50;
+                        zz = -90 + Math.random() * 50;
+                    } else {
+                        zx = 40 + Math.random() * 60;
+                        zz = 40 + Math.random() * 60;
+                    }
+                }
+                
                 const zy = getTerrainHeight(zx, zz);
                 
-                const randType = Math.random();
+                // Force TNT Zombie (creeper) if inside the desert dunes biome bounds
+                const distToDesertCenter = Math.sqrt(Math.pow(zx - 350, 2) + Math.pow(zz + 350, 2));
+                const inDesertBiome = distToDesertCenter < 180;
+                
                 let type, health, mesh;
-                if (randType < 0.30) {
-                    type = 'skeleton';
-                    health = 45;
-                    mesh = createSkeletonMesh();
-                } else if (randType < 0.60) {
+                if (inDesertBiome) {
                     type = 'creeper';
                     health = 38;
                     mesh = createCreeperMesh();
                 } else {
-                    type = 'zombie';
-                    health = 40;
-                    mesh = createZombieMesh();
+                    const randType = Math.random();
+                    if (randType < 0.30) {
+                        type = 'skeleton';
+                        health = 45;
+                        mesh = createSkeletonMesh();
+                    } else if (randType < 0.60) {
+                        type = 'creeper';
+                        health = 38;
+                        mesh = createCreeperMesh();
+                    } else {
+                        type = 'zombie';
+                        health = 40;
+                        mesh = createZombieMesh();
+                    }
                 }
                 mesh.position.set(zx, zy, zz);
                 scene.add(mesh);
@@ -11596,16 +16434,28 @@ export function initNeonBruiser(): Cleanup {
             spawnInitialZombies();
         }
 
-        function clearZombies() {
-            zombies.forEach(z => {
-                scene.remove(z.mesh);
-            });
-            zombies.length = 0;
+        function clearZombies(forceAll = false) {
+            for (let i = zombies.length - 1; i >= 0; i--) {
+                if (forceAll || zombies[i].type !== 'crawling_tree') {
+                    scene.remove(zombies[i].mesh);
+                    zombies.splice(i, 1);
+                }
+            }
             
-            clientZombies.forEach(mesh => {
-                scene.remove(mesh);
+            clientZombies.forEach((mesh, id) => {
+                if (forceAll || mesh.zombieType !== 'crawling_tree') {
+                    scene.remove(mesh);
+                }
             });
-            clientZombies.clear();
+            if (forceAll) {
+                clientZombies.clear();
+            } else {
+                for (let [id, mesh] of clientZombies) {
+                    if (mesh.zombieType !== 'crawling_tree') {
+                        clientZombies.delete(id);
+                    }
+                }
+            }
             
             if (isHost && isConnected) {
                 sendNetworkMessage({ type: 'zombies-clear' });
@@ -11620,8 +16470,13 @@ export function initNeonBruiser(): Cleanup {
             for (let i = zombies.length - 1; i >= 0; i--) {
                 const z = zombies[i];
                 
+                if (z.type === 'crawling_tree') {
+                    updateCrawlingTree(z, delta, now);
+                    continue;
+                }
+                
                 // Hide zombies that are in a different dimension than the player
-                z.mesh.visible = (!!z.inCave === playerInCave);
+                z.mesh.visible = (isDimensionCave(z.inCave) === isDimensionCave(playerInCave));
                 
                 // 1. Handle death and slumping
                 if (z.isDead) {
@@ -11655,6 +16510,7 @@ export function initNeonBruiser(): Cleanup {
                     if (z.health <= 0) {
                         z.isDead = true;
                         z.deathTime = 0;
+                        handleZombieDeathDrops(z);
                         continue;
                     }
                 }
@@ -11668,6 +16524,7 @@ export function initNeonBruiser(): Cleanup {
                     if (z.health <= 0) {
                         z.isDead = true;
                         z.deathTime = 0;
+                        handleZombieDeathDrops(z);
                         continue;
                     }
                 }
@@ -11725,6 +16582,11 @@ export function initNeonBruiser(): Cleanup {
                         targetType = v;
                     }
                 });
+
+                // Cap night mob detection range to 16 coordinates
+                if (minDist > 16.0) {
+                    minDist = Infinity;
+                }
                 
                 // Creeper Hissing & Explosion logic
                 if (z.type === 'creeper') {
@@ -12000,7 +16862,9 @@ export function initNeonBruiser(): Cleanup {
                     deathTime: z.deathTime || 0,
                     type: z.type || 'zombie',
                     isHissing: z.isHissing || false,
-                    inCave: z.inCave || false
+                    inCave: z.inCave || false,
+                    crawlingTreeState: z.state || 'standing',
+                    attackAnimProgress: z.attackAnimProgress || 0
                 }));
                 sendNetworkMessage({
                     type: 'zombies-sync',
@@ -12310,6 +17174,212 @@ export function initNeonBruiser(): Cleanup {
             return group;
         }
 
+        function createTurtleMesh() {
+            const group = new THREE.Group();
+            const shellMat = new THREE.MeshStandardMaterial({ color: 0x1f5c22, roughness: 0.9 }); // Dark green
+            const skinMat = new THREE.MeshStandardMaterial({ color: 0x4a9c4d, roughness: 0.8 });  // Lighter green
+            const eyeMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+
+            // Shell (torso)
+            const shell = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.25, 0.9), shellMat);
+            shell.position.y = 0.2;
+            shell.castShadow = true;
+            shell.receiveShadow = true;
+            group.add(shell);
+
+            // Head
+            const head = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.2, 0.25), skinMat);
+            head.position.set(0, 0.2, 0.55);
+            head.castShadow = true;
+            group.add(head);
+
+            // Flippers (4 legs, rotated/flat)
+            const flipperGeo = new THREE.BoxGeometry(0.2, 0.05, 0.4);
+            
+            const flipperFL = new THREE.Mesh(flipperGeo, skinMat);
+            flipperFL.position.set(-0.45, 0.1, 0.35);
+            flipperFL.rotation.y = Math.PI / 4;
+            flipperFL.castShadow = true;
+            group.add(flipperFL);
+
+            const flipperFR = new THREE.Mesh(flipperGeo, skinMat);
+            flipperFR.position.set(0.45, 0.1, 0.35);
+            flipperFR.rotation.y = -Math.PI / 4;
+            flipperFR.castShadow = true;
+            group.add(flipperFR);
+
+            const flipperBL = new THREE.Mesh(flipperGeo, skinMat);
+            flipperBL.position.set(-0.4, 0.1, -0.35);
+            flipperBL.rotation.y = -Math.PI / 4;
+            flipperBL.castShadow = true;
+            group.add(flipperBL);
+
+            const flipperBR = new THREE.Mesh(flipperGeo, skinMat);
+            flipperBR.position.set(0.4, 0.1, -0.35);
+            flipperBR.rotation.y = Math.PI / 4;
+            flipperBR.castShadow = true;
+            group.add(flipperBR);
+
+            group.userData = { type: 'turtle', head: head, legFL: flipperFL, legFR: flipperFR, legBL: flipperBL, legBR: flipperBR };
+            return group;
+        }
+
+        function createHorseMesh() {
+            const group = new THREE.Group();
+            
+            // Materials
+            const horseColor = 0x8b4513; // SaddleBrown (reddish brown)
+            const horseMat = new THREE.MeshStandardMaterial({ color: horseColor, roughness: 0.8 });
+            const darkMat = new THREE.MeshStandardMaterial({ color: 0x3d2314, roughness: 0.8 }); // Dark brown for hooves / mane / tail
+            const whiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 });
+            const eyeMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+            const saddleMat = new THREE.MeshStandardMaterial({ color: 0x802a0a, roughness: 0.7 }); // Saddle leather color
+            const stirrupMat = new THREE.MeshStandardMaterial({ color: 0xdddddd, metalness: 0.8, roughness: 0.2 });
+
+            // Torso (centered around y = 0.95)
+            // A horse torso is taller and longer
+            const torso = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.8, 1.4), horseMat);
+            torso.position.y = 0.95;
+            torso.castShadow = true;
+            torso.receiveShadow = true;
+            group.add(torso);
+
+            // Neck (angled up)
+            const neck = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.6, 0.35), horseMat);
+            neck.position.set(0, 1.35, 0.55);
+            neck.rotation.x = -0.3; // Angle neck forward
+            neck.castShadow = true;
+            group.add(neck);
+
+            // Mane (hair along neck)
+            const mane = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.55, 0.1), darkMat);
+            mane.position.set(0, 1.45, 0.45);
+            mane.rotation.x = -0.3;
+            group.add(mane);
+
+            // Head (longer head placed on neck)
+            const headGroup = new THREE.Group();
+            headGroup.position.set(0, 1.55, 0.75);
+            
+            const head = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.32, 0.55), horseMat);
+            head.position.set(0, 0, 0);
+            head.castShadow = true;
+            headGroup.add(head);
+
+            // Snout/Nose
+            const nose = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.22, 0.15), darkMat);
+            nose.position.set(0, -0.05, 0.3);
+            nose.castShadow = true;
+            headGroup.add(nose);
+
+            // Ears
+            const earGeo = new THREE.BoxGeometry(0.08, 0.16, 0.08);
+            const earL = new THREE.Mesh(earGeo, horseMat);
+            earL.position.set(-0.1, 0.22, -0.15);
+            const earR = new THREE.Mesh(earGeo, horseMat);
+            earR.position.set(0.1, 0.22, -0.15);
+            headGroup.add(earL);
+            headGroup.add(earR);
+
+            // Eyes
+            const leftEye = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.06, 0.04), eyeMat);
+            leftEye.position.set(-0.17, 0.06, 0.15);
+            const rightEye = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.06, 0.04), eyeMat);
+            rightEye.position.set(0.17, 0.06, 0.15);
+            headGroup.add(leftEye);
+            headGroup.add(rightEye);
+
+            group.add(headGroup);
+
+            // Tail
+            const tail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.7, 0.1), darkMat);
+            tail.position.set(0, 0.8, -0.75);
+            tail.rotation.x = 0.1;
+            tail.castShadow = true;
+            group.add(tail);
+
+            // 4 Long Legs
+            const legGeo = new THREE.BoxGeometry(0.18, 0.65, 0.18);
+            const hoofGeo = new THREE.BoxGeometry(0.2, 0.1, 0.2);
+            
+            // FL
+            const legFLGroup = new THREE.Group();
+            legFLGroup.position.set(-0.25, 0.6, 0.5);
+            const legFL = new THREE.Mesh(legGeo, horseMat);
+            legFL.position.y = -0.325;
+            legFL.castShadow = true;
+            const hoofFL = new THREE.Mesh(hoofGeo, darkMat);
+            hoofFL.position.y = -0.65;
+            legFLGroup.add(legFL);
+            legFLGroup.add(hoofFL);
+            group.add(legFLGroup);
+
+            // FR
+            const legFRGroup = new THREE.Group();
+            legFRGroup.position.set(0.25, 0.6, 0.5);
+            const legFR = new THREE.Mesh(legGeo, horseMat);
+            legFR.position.y = -0.325;
+            legFR.castShadow = true;
+            const hoofFR = new THREE.Mesh(hoofGeo, darkMat);
+            hoofFR.position.y = -0.65;
+            legFRGroup.add(legFR);
+            legFRGroup.add(hoofFR);
+            group.add(legFRGroup);
+
+            // BL
+            const legBLGroup = new THREE.Group();
+            legBLGroup.position.set(-0.25, 0.6, -0.5);
+            const legBL = new THREE.Mesh(legGeo, horseMat);
+            legBL.position.y = -0.325;
+            legBL.castShadow = true;
+            const hoofBL = new THREE.Mesh(hoofGeo, darkMat);
+            hoofBL.position.y = -0.65;
+            legBLGroup.add(legBL);
+            legBLGroup.add(hoofBL);
+            group.add(legBLGroup);
+
+            // BR
+            const legBRGroup = new THREE.Group();
+            legBRGroup.position.set(0.25, 0.6, -0.5);
+            const legBR = new THREE.Mesh(legGeo, horseMat);
+            legBR.position.y = -0.325;
+            legBR.castShadow = true;
+            const hoofBR = new THREE.Mesh(hoofGeo, darkMat);
+            hoofBR.position.y = -0.65;
+            legBRGroup.add(legBR);
+            legBRGroup.add(hoofBR);
+            group.add(legBRGroup);
+
+            // Saddle (wrapped around torso, initially invisible)
+            const saddleGroup = new THREE.Group();
+            const saddleBase = new THREE.Mesh(new THREE.BoxGeometry(0.74, 0.5, 0.5), saddleMat);
+            saddleBase.position.y = 0.96;
+            saddleBase.position.z = -0.1;
+            saddleBase.castShadow = true;
+            saddleGroup.add(saddleBase);
+
+            // Stirrup straps & metal stirrups
+            const strapL = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.45, 0.04), darkMat);
+            strapL.position.set(-0.38, 0.65, -0.1);
+            saddleGroup.add(strapL);
+            const metalL = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.02, 0.08), stirrupMat);
+            metalL.position.set(-0.38, 0.4, -0.1);
+            saddleGroup.add(metalL);
+
+            const strapR = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.45, 0.04), darkMat);
+            strapR.position.set(0.38, 0.65, -0.1);
+            saddleGroup.add(strapR);
+            const metalR = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.02, 0.08), stirrupMat);
+            metalR.position.set(0.38, 0.4, -0.1);
+            saddleGroup.add(metalR);
+
+            saddleGroup.visible = false;
+            group.add(saddleGroup);
+
+            group.userData = { type: 'horse', head: headGroup, legFL: legFLGroup, legFR: legFRGroup, legBL: legBLGroup, legBR: legBRGroup, saddle: saddleGroup };
+            return group;
+        }
+
         function flashAnimalRed(mesh) {
             mesh.traverse((node) => {
                 if (node.isMesh && node.material && node.material.color) {
@@ -12337,6 +17407,21 @@ export function initNeonBruiser(): Cleanup {
                 spawnDroppedFood('turtle_shell', animal.mesh.position.clone().add(new THREE.Vector3(0.2, 0.2, 0.2)));
             } else if (animal.type === 'cow') {
                 spawnDroppedFood('leather', animal.mesh.position.clone().add(new THREE.Vector3(0.2, 0.2, 0.2)));
+            } else if (animal.type === 'horse') {
+                spawnDroppedFood('leather', animal.mesh.position.clone().add(new THREE.Vector3(0.2, 0.2, 0.2)));
+                if (animal.hasSaddle) {
+                    spawnDroppedFood('saddle', animal.mesh.position.clone().add(new THREE.Vector3(-0.2, 0.2, -0.2)));
+                }
+            }
+        }
+
+        function handleZombieDeathDrops(z) {
+            if (z.type === 'creeper') {
+                const count = Math.floor(Math.random() * 3);
+                for (let j = 0; j < count; j++) {
+                    const dropPos = z.mesh.position.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.4, 0.2, (Math.random() - 0.5) * 0.4));
+                    spawnDroppedFood('gunpowder', dropPos);
+                }
             }
         }
 
@@ -12345,10 +17430,12 @@ export function initNeonBruiser(): Cleanup {
             if (type === 'cow') return 'beef';
             if (type === 'sheep') return 'mutton';
             if (type === 'chicken') return 'chicken';
+            if (type === 'turtle') return 'raw_fish';
+            if (type === 'horse') return 'leather';
             return 'porkchop';
         }
 
-        function spawnDroppedFood(type, pos, scale = 1.0) {
+        function spawnDroppedFood(type, pos, scale = 1.0, durability = null) {
             const foodMesh = createDroppedFoodMesh(type);
             if (scale !== 1.0) {
                 foodMesh.scale.multiplyScalar(scale);
@@ -12362,7 +17449,8 @@ export function initNeonBruiser(): Cleanup {
                 mesh: foodMesh,
                 pos: foodMesh.position,
                 spawnTime: Date.now(),
-                rotY: Math.random() * Math.PI
+                rotY: Math.random() * Math.PI,
+                durability: durability
             });
         }
 
@@ -12674,7 +17762,7 @@ export function initNeonBruiser(): Cleanup {
                 }
                 
                 // Hide villagers if they are in a different dimension than the player
-                v.mesh.visible = (!!v.inCave === playerInCave);
+                v.mesh.visible = (isDimensionCave(v.inCave) === isDimensionCave(playerInCave));
 
                 // Apply knockback velocities
                 if (v.kx || v.kz) {
@@ -12771,62 +17859,146 @@ export function initNeonBruiser(): Cleanup {
             droppedFoods.length = 0;
         }
 
+        function spawnAnimalsInZone(type, count, cx, cz, r, health) {
+            for (let c = 0; c < count; c++) {
+                let ax = 0, az = 0, ay = 0;
+                let foundSpot = false;
+                for (let attempts = 0; attempts < 30; attempts++) {
+                    ax = cx + (Math.random() - 0.5) * r * 2;
+                    az = cz + (Math.random() - 0.5) * r * 2;
+                    ay = getTerrainHeight(ax, az);
+                    
+                    if (ay < -10 || ay <= WATER_Y) {
+                        continue;
+                    }
+                    
+                    // Check distance to all existing animals
+                    let tooClose = false;
+                    for (let i = 0; i < animals.length; i++) {
+                        const other = animals[i];
+                        const dx = other.x - ax;
+                        const dz = other.z - az;
+                        if (dx * dx + dz * dz < 49.0) { // 7 meters minimum distance
+                            tooClose = true;
+                            break;
+                        }
+                    }
+                    if (!tooClose) {
+                        foundSpot = true;
+                        break;
+                    }
+                }
+                
+                if (ay < -10 || ay <= WATER_Y) continue;
+                
+                let mesh;
+                if (type === 'pig') mesh = createPigMesh();
+                else if (type === 'cow') mesh = createCowMesh();
+                else if (type === 'sheep') mesh = createSheepMesh();
+                else if (type === 'chicken') mesh = createChickenMesh();
+                else if (type === 'turtle') mesh = createTurtleMesh();
+                else if (type === 'horse') mesh = createHorseMesh();
+                
+                if (!mesh) continue;
+                mesh.position.set(ax, ay, az);
+                scene.add(mesh);
+                
+                const extraFields = {};
+                if (type === 'horse') {
+                    extraFields.hasSaddle = false;
+                    extraFields.isRidden = false;
+                    extraFields.rider = null;
+                }
+                
+                animals.push(Object.assign({
+                    id: Math.random().toString(36).substr(2, 6),
+                    type: type,
+                    mesh: mesh,
+                    x: ax,
+                    y: ay,
+                    z: az,
+                    spawnX: ax,
+                    spawnZ: az,
+                    targetX: ax + (Math.random() - 0.5) * 15,
+                    targetZ: az + (Math.random() - 0.5) * 15,
+                    waitTime: Math.random() * 4.0,
+                    speed: 0.8 + Math.random() * 0.4,
+                    health: health,
+                    maxHealth: health,
+                    isDead: false,
+                    deathTime: 0,
+                    kx: 0,
+                    kz: 0
+                }, extraFields));
+            }
+        }
+
         function spawnInitialAnimals() {
             clearAnimals();
             
-            const spawnConfigs = [
-                { type: 'pig', health: 25, count: 6 },
-                { type: 'cow', health: 40, count: 6 },
-                { type: 'sheep', health: 20, count: 6 },
-                { type: 'chicken', health: 15, count: 7 }
-            ];
+            // 1. Plains / Spawn Biome (more animals, spread out!)
+            spawnAnimalsInZone('pig', 10, 70, 40, 50, 25);
+            spawnAnimalsInZone('cow', 10, 90, -20, 50, 40);
+            spawnAnimalsInZone('sheep', 10, 80, 70, 50, 20);
+            spawnAnimalsInZone('chicken', 12, 50, -10, 40, 15);
+            spawnAnimalsInZone('horse', 2, 70, 40, 50, 50); // Pretty rare horse spawn in plains
 
-            const zones = [
-                { cx: 60, cz: 20, r: 40 },      // Plains
-                { cx: -78, cz: -78, r: 25 },    // Village (Savanna)
-                { cx: -50, cz: 50, r: 35 }      // Forest
-            ];
+            // 2. Forest Biome
+            spawnAnimalsInZone('pig', 6, -50, 50, 40, 25);
+            spawnAnimalsInZone('cow', 6, -50, 50, 40, 40);
+            spawnAnimalsInZone('sheep', 6, -50, 50, 40, 20);
+            spawnAnimalsInZone('chicken', 6, -50, 50, 40, 15);
+            spawnAnimalsInZone('horse', 1, -50, 50, 40, 50); // 1 rare horse in forest
 
-            spawnConfigs.forEach(config => {
-                for (let c = 0; c < config.count; c++) {
-                    const zone = zones[Math.floor(Math.random() * zones.length)];
-                    const ax = zone.cx + (Math.random() - 0.5) * zone.r * 2;
-                    const az = zone.cz + (Math.random() - 0.5) * zone.r * 2;
-                    const ay = getTerrainHeight(ax, az);
-                    
-                    if (ay < -10) continue; // Don't spawn in water/abyss
-                    
-                    let mesh;
-                    if (config.type === 'pig') mesh = createPigMesh();
-                    else if (config.type === 'cow') mesh = createCowMesh();
-                    else if (config.type === 'sheep') mesh = createSheepMesh();
-                    else if (config.type === 'chicken') mesh = createChickenMesh();
-                    
-                    mesh.position.set(ax, ay, az);
+            // 3. Cherry Biome (should have animals!)
+            spawnAnimalsInZone('pig', 5, -150, -350, 80, 25);
+            spawnAnimalsInZone('sheep', 8, -150, -350, 80, 20);
+            spawnAnimalsInZone('chicken', 6, -150, -350, 80, 15);
+
+            // 4. Savanna Biome (should have some animals!)
+            spawnAnimalsInZone('cow', 6, -350, 250, 80, 40);
+            spawnAnimalsInZone('sheep', 6, -350, 250, 80, 20);
+            spawnAnimalsInZone('pig', 4, -350, 250, 80, 25);
+            spawnAnimalsInZone('horse', 1, -350, 250, 80, 50); // 1 rare horse in savanna
+            
+            // Desert: no animals (we do not spawn any in (350, -350) zone)
+
+            // 5. Dedicated Tropical Reef turtle spawning (spawn in reef area)
+            for (let c = 0; c < 12; c++) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = Math.random() * 70;
+                const ax = 0 + Math.cos(angle) * dist;
+                const az = -480 + Math.sin(angle) * dist;
+                const ay = getTerrainHeight(ax, az);
+                
+                if (ay <= WATER_Y) {
+                    const swimY = ay + (WATER_Y - ay) * 0.25;
+                    const mesh = createTurtleMesh();
+                    mesh.position.set(ax, swimY, az);
                     scene.add(mesh);
                     
                     animals.push({
                         id: Math.random().toString(36).substr(2, 6),
-                        type: config.type,
+                        type: 'turtle',
                         mesh: mesh,
                         x: ax,
-                        y: ay,
+                        y: swimY,
                         z: az,
                         spawnX: ax,
                         spawnZ: az,
-                        targetX: ax + (Math.random() - 0.5) * 15,
-                        targetZ: az + (Math.random() - 0.5) * 15,
-                        waitTime: Math.random() * 4.0,
-                        speed: 0.8 + Math.random() * 0.4,
-                        health: config.health,
-                        maxHealth: config.health,
+                        targetX: ax + (Math.random() - 0.5) * 20,
+                        targetZ: az + (Math.random() - 0.5) * 20,
+                        waitTime: Math.random() * 2.0,
+                        speed: 0.5 + Math.random() * 0.4, // Turtles swim slower and more gracefully!
+                        health: 30,
+                        maxHealth: 30,
                         isDead: false,
                         deathTime: 0,
                         kx: 0,
                         kz: 0
                     });
                 }
-            });
+            }
         }
 
         function updateAnimals(delta) {
@@ -12835,6 +18007,12 @@ export function initNeonBruiser(): Cleanup {
                 const a = animals[i];
                 a.mesh.visible = !playerInCave;
                 if (a.isDead) {
+                    if (a.rider === 'local') {
+                        ridingHorse = false;
+                        activeHorse = null;
+                        a.rider = null;
+                        addChatMessage("Your horse was killed!", "system");
+                    }
                     if (a.deathTime === undefined) a.deathTime = 0;
                     a.deathTime += delta;
                     const slumpProgress = Math.min(1.0, a.deathTime / 0.8);
@@ -12845,6 +18023,61 @@ export function initNeonBruiser(): Cleanup {
                         scene.remove(a.mesh);
                         animals.splice(i, 1);
                     }
+                    continue;
+                }
+                
+                if (a.rider === 'local') {
+                    // Update camera position to snap to horse
+                    camera.position.set(a.mesh.position.x, a.mesh.position.y + 1.8, a.mesh.position.z);
+                    
+                    // Steer direction based on camera and WASD inputs
+                    const isMoving = moveForces.forward || moveForces.backward || moveForces.left || moveForces.right;
+                    
+                    if (isMoving) {
+                        // Find forward direction projected on X-Z
+                        const camDir = new THREE.Vector3();
+                        camera.getWorldDirection(camDir);
+                        camDir.y = 0;
+                        camDir.normalize();
+                        
+                        const moveVector = new THREE.Vector3(0, 0, 0);
+                        if (moveForces.forward) moveVector.add(camDir);
+                        if (moveForces.backward) moveVector.sub(camDir);
+                        if (moveForces.left) {
+                            const leftDir = new THREE.Vector3(-camDir.z, 0, camDir.x);
+                            moveVector.add(leftDir);
+                        }
+                        if (moveForces.right) {
+                            const rightDir = new THREE.Vector3(camDir.z, 0, -camDir.x);
+                            moveVector.add(rightDir);
+                        }
+                        
+                        if (moveVector.lengthSq() > 0) {
+                            moveVector.normalize();
+                            a.mesh.rotation.y = Math.atan2(moveVector.x, moveVector.z);
+                            
+                            // Horse movement speed (horses are fast!)
+                            const horseSpeed = 10.0;
+                            a.mesh.position.x += moveVector.x * horseSpeed * delta;
+                            a.mesh.position.z += moveVector.z * horseSpeed * delta;
+                        }
+                    }
+                    
+                    // Snap Y to terrain height
+                    a.mesh.position.y = getTerrainHeight(a.mesh.position.x, a.mesh.position.z);
+                    
+                    a.x = a.mesh.position.x;
+                    a.y = a.mesh.position.y;
+                    a.z = a.mesh.position.z;
+                    
+                    // Update legs animation
+                    const walkSpeed = 15;
+                    const legAngle = isMoving ? Math.sin(now * 0.01 * walkSpeed) * 0.6 : 0;
+                    if (a.mesh.userData.legFL) a.mesh.userData.legFL.rotation.x = legAngle;
+                    if (a.mesh.userData.legFR) a.mesh.userData.legFR.rotation.x = -legAngle;
+                    if (a.mesh.userData.legBL) a.mesh.userData.legBL.rotation.x = -legAngle;
+                    if (a.mesh.userData.legBR) a.mesh.userData.legBR.rotation.x = legAngle;
+                    
                     continue;
                 }
                 
@@ -12874,8 +18107,19 @@ export function initNeonBruiser(): Cleanup {
                 
                 if (dist < 0.6) {
                     a.waitTime = 2.0 + Math.random() * 5.0;
-                    a.targetX = a.mesh.position.x + (Math.random() - 0.5) * 30;
-                    a.targetZ = a.mesh.position.z + (Math.random() - 0.5) * 30;
+                    
+                    // Choose target (rejecting desert center 350, -350 with radius 180)
+                    let attempts = 0;
+                    let tx = a.mesh.position.x;
+                    let tz = a.mesh.position.z;
+                    do {
+                        tx = a.mesh.position.x + (Math.random() - 0.5) * 30;
+                        tz = a.mesh.position.z + (Math.random() - 0.5) * 30;
+                        attempts++;
+                    } while (Math.sqrt((tx - 350) ** 2 + (tz - (-350)) ** 2) < 180 && attempts < 10);
+                    
+                    a.targetX = tx;
+                    a.targetZ = tz;
                     
                     const targetHeight = getTerrainHeight(a.targetX, a.targetZ);
                     if (targetHeight < -10) {
@@ -12902,19 +18146,23 @@ export function initNeonBruiser(): Cleanup {
             }
         }
 
-        function addFoodToInventory(type) {
+        function addFoodToInventory(type, durability = null) {
             obtainedItems.add(type);
-            for (let i = 0; i < 9; i++) {
-                if (hotbarItems[i] === type && hotbarCounts[i] < 64) {
-                    hotbarCounts[i]++;
-                    return true;
-                }
-            }
+            const tool = isTool(type);
             
-            for (let i = 0; i < 27; i++) {
-                if (inventoryItems[i] === type && inventoryCounts[i] < 64) {
-                    inventoryCounts[i]++;
-                    return true;
+            if (!tool) {
+                for (let i = 0; i < 9; i++) {
+                    if (hotbarItems[i] === type && hotbarCounts[i] < 64) {
+                        hotbarCounts[i]++;
+                        return true;
+                    }
+                }
+                
+                for (let i = 0; i < 27; i++) {
+                    if (inventoryItems[i] === type && inventoryCounts[i] < 64) {
+                        inventoryCounts[i]++;
+                        return true;
+                    }
                 }
             }
             
@@ -12922,6 +18170,9 @@ export function initNeonBruiser(): Cleanup {
                 if (hotbarItems[i] === null) {
                     hotbarItems[i] = type;
                     hotbarCounts[i] = 1;
+                    if (tool) {
+                        hotbarDurability[i] = durability !== null ? durability : getMaxDurability(type);
+                    }
                     return true;
                 }
             }
@@ -12930,6 +18181,9 @@ export function initNeonBruiser(): Cleanup {
                 if (inventoryItems[i] === null) {
                     inventoryItems[i] = type;
                     inventoryCounts[i] = 1;
+                    if (tool) {
+                        inventoryDurability[i] = durability !== null ? durability : getMaxDurability(type);
+                    }
                     return true;
                 }
             }
@@ -12954,8 +18208,8 @@ export function initNeonBruiser(): Cleanup {
                 }
 
                 const dist = playerPos.distanceTo(df.pos);
-                if (dist < 1.8) {
-                    const success = addFoodToInventory(df.type);
+                if (myHealth > 0 && dist < 1.8) {
+                    const success = addFoodToInventory(df.type, df.durability);
                     if (success) {
                         AudioSynth.playPickup();
                         scene.remove(df.mesh);
@@ -13079,6 +18333,19 @@ export function initNeonBruiser(): Cleanup {
         let lastHealthSyncTime = 0;
         function updatePlayerBurning(delta) {
             const elFireVignette = document.getElementById('fire-vignette');
+            
+            // Check collision with placed fire blocks
+            placedObjects.forEach(obj => {
+                if (obj.type === 'fire') {
+                    const dx = camera.position.x - obj.pos.x;
+                    const dz = camera.position.z - obj.pos.z;
+                    const dy = (camera.position.y - 1.0) - obj.pos.y;
+                    const distH = Math.sqrt(dx * dx + dz * dz);
+                    if (distH < 0.65 && Math.abs(dy) < 0.9) {
+                        myBurnTime = 10.0;
+                    }
+                }
+            });
             
             if (myBurnTime > 0 && myHealth > 0) {
                 myBurnTime -= delta;
@@ -13216,6 +18483,144 @@ export function initNeonBruiser(): Cleanup {
             noise.stop(now + 2.0);
         };
 
+        AudioSynth.playThunder = function(pos) {
+            this.init();
+            if (!this.ctx) return;
+            const now = this.ctx.currentTime;
+            
+            // Multiple random thuds and rumbles
+            const count = 3 + Math.floor(Math.random() * 3);
+            for (let i = 0; i < count; i++) {
+                const delay = i * (0.15 + Math.random() * 0.15);
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                
+                osc.type = 'sawtooth';
+                const startFreq = 60 + Math.random() * 30;
+                osc.frequency.setValueAtTime(startFreq, now + delay);
+                osc.frequency.linearRampToValueAtTime(10, now + delay + 0.6 + Math.random() * 0.6);
+                
+                const vol = 0.5 + Math.random() * 0.5;
+                gain.gain.setValueAtTime(vol * 0.6, now + delay);
+                gain.gain.exponentialRampToValueAtTime(0.005, now + delay + 0.6 + Math.random() * 0.6);
+                
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                
+                osc.start(now + delay);
+                osc.stop(now + delay + 1.2);
+            }
+            
+            // Add a lowpass filtered white noise burst for the thunder crash
+            const bufferSize = this.ctx.sampleRate * 1.5;
+            const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                data[i] = Math.random() * 2 - 1;
+            }
+            
+            const noise = this.ctx.createBufferSource();
+            noise.buffer = buffer;
+            
+            const filter = this.ctx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.value = 150; // low rumble
+            
+            const noiseGain = this.ctx.createGain();
+            noiseGain.gain.setValueAtTime(0.7, now);
+            noiseGain.gain.exponentialRampToValueAtTime(0.005, now + 1.4);
+            
+            noise.connect(filter);
+            filter.connect(noiseGain);
+            noiseGain.connect(this.ctx.destination);
+            
+            noise.start(now);
+            noise.stop(now + 1.5);
+        };
+
+        function playRainSoundLoop() {
+            AudioSynth.init();
+            if (!AudioSynth.ctx) return;
+            if (rainSoundSource) return;
+            
+            const bufferSize = AudioSynth.ctx.sampleRate * 2.0; // 2 seconds of white noise
+            const buffer = AudioSynth.ctx.createBuffer(1, bufferSize, AudioSynth.ctx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                data[i] = Math.random() * 2 - 1;
+            }
+            
+            rainSoundSource = AudioSynth.ctx.createBufferSource();
+            rainSoundSource.buffer = buffer;
+            rainSoundSource.loop = true;
+            
+            const filter = AudioSynth.ctx.createBiquadFilter();
+            filter.type = 'bandpass';
+            filter.frequency.value = 1000;
+            filter.Q.value = 0.5;
+            
+            rainSoundGain = AudioSynth.ctx.createGain();
+            rainSoundGain.gain.setValueAtTime(0.04, AudioSynth.ctx.currentTime);
+            
+            rainSoundSource.connect(filter);
+            filter.connect(rainSoundGain);
+            rainSoundGain.connect(AudioSynth.ctx.destination);
+            
+            rainSoundSource.start();
+        }
+
+        function stopRainSoundLoop() {
+            if (rainSoundSource) {
+                try {
+                    rainSoundSource.stop();
+                } catch(e) {}
+                rainSoundSource = null;
+            }
+            rainSoundGain = null;
+        }
+
+        function setWeather(weather) {
+            currentWeather = weather;
+            
+            if (weather === 'rain' || weather === 'thunder') {
+                playRainSoundLoop();
+                if (!rainParticles) {
+                    const particleCount = 2000;
+                    const geom = new THREE.BufferGeometry();
+                    const positions = new Float32Array(particleCount * 3);
+                    const velocities = new Float32Array(particleCount);
+                    
+                    for (let i = 0; i < particleCount; i++) {
+                        positions[i * 3] = (Math.random() - 0.5) * 50;     // X
+                        positions[i * 3 + 1] = Math.random() * 35 - 10;    // Y
+                        positions[i * 3 + 2] = (Math.random() - 0.5) * 50; // Z
+                        velocities[i] = 25 + Math.random() * 15;
+                    }
+                    
+                    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                    
+                    const mat = new THREE.PointsMaterial({
+                        color: 0x88ccff,
+                        size: 0.15,
+                        transparent: true,
+                        opacity: 0.6,
+                        depthWrite: false
+                    });
+                    
+                    rainParticles = new THREE.Points(geom, mat);
+                    rainParticles.userData = { velocities: velocities };
+                    scene.add(rainParticles);
+                } else {
+                    rainParticles.visible = true;
+                }
+            } else {
+                stopRainSoundLoop();
+                if (rainParticles) {
+                    rainParticles.visible = false;
+                }
+            }
+        }
+
         function createChestMesh() {
             const group = new THREE.Group();
             
@@ -13310,6 +18715,38 @@ export function initNeonBruiser(): Cleanup {
                 }
             });
             return bestBed;
+        }
+
+        function getHorseAimTarget() {
+            const myX = camera.position.x;
+            const myY = camera.position.y;
+            const myZ = camera.position.z;
+            const lookDir = new THREE.Vector3();
+            camera.getWorldDirection(lookDir);
+            
+            let bestHorse = null;
+            let bestDist = Infinity;
+            
+            animals.forEach(a => {
+                if (a.type !== 'horse' || a.isDead) return;
+                
+                const dx = a.mesh.position.x - myX;
+                const dy = (a.mesh.position.y + 0.5) - myY;
+                const dz = a.mesh.position.z - myZ;
+                const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                
+                if (dist < 4.0) {
+                    const toObj = new THREE.Vector3(dx, dy, dz).normalize();
+                    const dot = lookDir.dot(toObj);
+                    if (dot > 0.8) {
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            bestHorse = a;
+                        }
+                    }
+                }
+            });
+            return bestHorse;
         }
 
         function trySleepInBed() {
@@ -13461,6 +18898,86 @@ export function initNeonBruiser(): Cleanup {
             return group;
         }
 
+        function getCampfireAimTarget() {
+            const myX = camera.position.x;
+            const myY = camera.position.y;
+            const myZ = camera.position.z;
+            const lookDir = new THREE.Vector3();
+            camera.getWorldDirection(lookDir);
+            
+            let bestCampfire = null;
+            let bestDist = Infinity;
+            
+            placedObjects.forEach(obj => {
+                if (obj.type !== 'campfire' && obj.type !== 'unlit_campfire') return;
+                
+                const dx = obj.pos.x - myX;
+                const dy = (obj.pos.y + 0.15) - myY;
+                const dz = obj.pos.z - myZ;
+                const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                
+                if (dist < 4.0) {
+                    const toObj = new THREE.Vector3(dx, dy, dz).normalize();
+                    const dot = lookDir.dot(toObj);
+                    if (dot > 0.85) {
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            bestCampfire = obj;
+                        }
+                    }
+                }
+            });
+            return bestCampfire;
+        }
+
+        function interactWithCampfire(campfire) {
+            const heldType = hotbarItems[selectedHotbarIndex];
+            
+            if (campfire.type === 'unlit_campfire') {
+                if (heldType === 'flint_and_steel') {
+                    campfire.type = 'campfire';
+                    campfire.burnTimeLeft = 60.0;
+                    addCampfireFireMesh(campfire);
+                    AudioSynth.playHit(campfire.pos);
+                    addChatMessage("Campfire lit! Keep it fed with logs, planks, sticks, coal, or charcoal.", "system");
+                    useToolInHand();
+                    saveWorld(false);
+                } else {
+                    addChatMessage("This campfire is unlit. Use Flint and Steel to light it!", "system");
+                }
+            } else if (campfire.type === 'campfire') {
+                if (heldType && ['log', 'planks', 'sticks', 'coal', 'charcoal'].includes(heldType)) {
+                    let feedAmount = 0;
+                    if (heldType === 'coal' || heldType === 'charcoal') feedAmount = 60.0;
+                    else if (heldType === 'log') feedAmount = 15.0;
+                    else if (heldType === 'planks') feedAmount = 10.0;
+                    else if (heldType === 'sticks') feedAmount = 3.0;
+                    
+                    if (feedAmount > 0) {
+                        if (typeof campfire.burnTimeLeft === 'undefined') {
+                            campfire.burnTimeLeft = 60.0;
+                        }
+                        campfire.burnTimeLeft = Math.min(120.0, campfire.burnTimeLeft + feedAmount);
+                        
+                        hotbarCounts[selectedHotbarIndex]--;
+                        if (hotbarCounts[selectedHotbarIndex] <= 0) {
+                            hotbarItems[selectedHotbarIndex] = null;
+                            hotbarCounts[selectedHotbarIndex] = 0;
+                        }
+                        updateHotbarUI();
+                        updateInventoryUI();
+                        
+                        AudioSynth.playHit(campfire.pos);
+                        addChatMessage(`Fed campfire! Burn time left: ${Math.round(campfire.burnTimeLeft)}s (max 120s)`, "system");
+                        saveWorld(false);
+                    }
+                } else {
+                    const timeRemaining = Math.round(campfire.burnTimeLeft || 0);
+                    addChatMessage(`Campfire is burning (${timeRemaining}s remaining). Feed it logs, planks, sticks, coal, or charcoal!`, "system");
+                }
+            }
+        }
+
         function getFurnaceAimTarget() {
             const myX = camera.position.x;
             const myY = camera.position.y;
@@ -13497,30 +19014,119 @@ export function initNeonBruiser(): Cleanup {
             return bestFurnace;
         }
 
+        function isTool(type) {
+            if (!type) return false;
+            return type.endsWith('_axe') || type.endsWith('_pickaxe') || type.endsWith('_sword') || type.endsWith('_shovel') || type === 'bow' || type === 'flint_and_steel';
+        }
+
+        function getMaxDurability(type) {
+            if (!type) return 100;
+            if (type.startsWith('wooden_')) return 60;
+            if (type.startsWith('stone_')) return 130;
+            if (type.startsWith('copper_')) return 130;
+            if (type.startsWith('iron_')) return 250;
+            if (type === 'bow') return 380;
+            if (type === 'flint_and_steel') return 200;
+            return 100;
+        }
+
+        function getDurabilityBarHTML(item, durability) {
+            if (item && isTool(item)) {
+                const maxDur = getMaxDurability(item);
+                const curDur = (durability !== null && durability !== undefined) ? durability : maxDur;
+                const pct = Math.max(0, Math.min(100, (curDur / maxDur) * 100));
+                
+                let barColor = '#00ff00';
+                if (pct < 25) {
+                    barColor = '#ff3333';
+                } else if (pct < 50) {
+                    barColor = '#ffaa00';
+                }
+                
+                return `
+                    <div class="durability-bar" style="position: absolute; bottom: 2px; left: 4px; right: 4px; height: 3px; background: rgba(0,0,0,0.5); border-radius: 1px; overflow: hidden; pointer-events: none; z-index: 10;">
+                        <div style="width: ${pct}%; height: 100%; background: ${barColor};"></div>
+                    </div>
+                `;
+            }
+            return '';
+        }
+
+        function initDurabilityArrays() {
+            if (!inventoryDurability) {
+                inventoryDurability = new Array(27).fill(null);
+            }
+            if (!hotbarDurability) {
+                hotbarDurability = new Array(9).fill(null);
+            }
+            for (let i = 0; i < 27; i++) {
+                if (inventoryItems[i] && isTool(inventoryItems[i]) && (inventoryDurability[i] === null || inventoryDurability[i] === undefined)) {
+                    inventoryDurability[i] = getMaxDurability(inventoryItems[i]);
+                }
+            }
+            for (let i = 0; i < 9; i++) {
+                if (hotbarItems[i] && isTool(hotbarItems[i]) && (hotbarDurability[i] === null || hotbarDurability[i] === undefined)) {
+                    hotbarDurability[i] = getMaxDurability(hotbarItems[i]);
+                }
+            }
+        }
+
+        function useToolInHand() {
+            const item = hotbarItems[selectedHotbarIndex];
+            if (isTool(item)) {
+                if (hotbarDurability[selectedHotbarIndex] === null || hotbarDurability[selectedHotbarIndex] === undefined) {
+                    hotbarDurability[selectedHotbarIndex] = getMaxDurability(item);
+                }
+                
+                hotbarDurability[selectedHotbarIndex]--;
+                
+                if (hotbarDurability[selectedHotbarIndex] <= 0) {
+                    hotbarItems[selectedHotbarIndex] = null;
+                    hotbarCounts[selectedHotbarIndex] = 0;
+                    hotbarDurability[selectedHotbarIndex] = null;
+                    
+                    AudioSynth.playBreak();
+                    addChatMessage(`Your ${ITEM_NAMES[item] || item} broke!`, "system");
+                    
+                    activeWeapon = 'fists';
+                    
+                    updateWeaponUI();
+                    updateHotbarUI();
+                    updateInventoryUI();
+                } else {
+                    updateHotbarUI();
+                }
+            }
+        }
+
         function isFuel(type) {
-            return ['coal', 'log', 'planks', 'sticks', 'door', 'ladder', 'wooden_stairs', 'wooden_pickaxe', 'wooden_axe', 'wooden_sword'].includes(type);
+            return ['coal', 'charcoal', 'log', 'planks', 'sticks', 'door', 'ladder', 'wooden_stairs', 'wooden_pickaxe', 'wooden_axe', 'wooden_sword', 'wooden_shovel', 'coral'].includes(type);
         }
 
         function getFuelBurnTime(type) {
-            if (type === 'coal') return 40;
+            if (type === 'coal' || type === 'charcoal') return 40;
+            if (type === 'coral') return 12;
             if (type === 'log') return 10;
             if (type === 'planks') return 8;
             if (type === 'sticks') return 3;
-            if (['door', 'ladder', 'wooden_stairs', 'wooden_pickaxe', 'wooden_axe', 'wooden_sword'].includes(type)) return 6;
+            if (['door', 'ladder', 'wooden_stairs', 'wooden_pickaxe', 'wooden_axe', 'wooden_sword', 'wooden_shovel'].includes(type)) return 6;
             return 0;
         }
 
         function isSmeltable(type) {
-            return ['raw_iron', 'porkchop', 'beef', 'mutton', 'chicken', 'raw_fish'].includes(type);
+            return ['log', 'raw_iron', 'raw_copper', 'limestone', 'porkchop', 'beef', 'mutton', 'chicken', 'raw_fish'].includes(type);
         }
 
         function getSmeltTime(type) {
-            if (type === 'raw_iron') return 8;
+            if (type === 'log') return 5;
+            if (type === 'raw_iron' || type === 'raw_copper' || type === 'limestone') return 8;
             return 5;
         }
 
         function getSmeltOutput(type) {
+            if (type === 'log') return 'charcoal';
             if (type === 'raw_iron') return 'iron_ingot';
+            if (type === 'raw_copper') return 'copper_ingot';
             if (type === 'porkchop') return 'cooked_porkchop';
             if (type === 'beef') return 'cooked_beef';
             if (type === 'mutton') return 'cooked_mutton';
@@ -13540,7 +19146,8 @@ export function initNeonBruiser(): Cleanup {
                         outputItem: null,
                         fuelBurnTimeLeft: 0,
                         fuelMaxBurnTime: 0,
-                        smeltProgress: 0
+                        smeltProgress: 0,
+                        pendingLimestoneOutput: null
                     };
                 }
                 
@@ -13551,11 +19158,29 @@ export function initNeonBruiser(): Cleanup {
                     if (state.fuelBurnTimeLeft < 0) state.fuelBurnTimeLeft = 0;
                 }
                 
+                if (state.inputItem && state.inputItem.type === 'limestone') {
+                    if (!state.pendingLimestoneOutput) {
+                        const r = Math.random();
+                        if (r < 0.34) {
+                            state.pendingLimestoneOutput = 'flint';
+                        } else if (r < 0.34 + 0.21) {
+                            state.pendingLimestoneOutput = 'raw_iron';
+                        } else {
+                            state.pendingLimestoneOutput = 'nothing'; // slag
+                        }
+                    }
+                } else {
+                    state.pendingLimestoneOutput = null;
+                }
+                
                 const canSmelt = state.inputItem && state.inputItem.count > 0 && isSmeltable(state.inputItem.type);
                 let outputCompatible = true;
                 if (canSmelt && state.outputItem) {
-                    const expectedOutput = getSmeltOutput(state.inputItem.type);
-                    if (state.outputItem.type !== expectedOutput || state.outputItem.count >= 64) {
+                    let expectedOutput = getSmeltOutput(state.inputItem.type);
+                    if (state.inputItem.type === 'limestone') {
+                        expectedOutput = state.pendingLimestoneOutput;
+                    }
+                    if (expectedOutput && expectedOutput !== 'nothing' && (state.outputItem.type !== expectedOutput || state.outputItem.count >= 64)) {
                         outputCompatible = false;
                     }
                 }
@@ -13579,17 +19204,23 @@ export function initNeonBruiser(): Cleanup {
                     if (state.smeltProgress >= 1.0) {
                         state.smeltProgress = 0;
                         const inputType = state.inputItem.type;
-                        const outputType = getSmeltOutput(inputType);
+                        let outputType = getSmeltOutput(inputType);
+                        if (inputType === 'limestone') {
+                            outputType = state.pendingLimestoneOutput;
+                            state.pendingLimestoneOutput = null; // reset for next limestone piece
+                        }
                         
                         state.inputItem.count--;
                         if (state.inputItem.count <= 0) {
                             state.inputItem = null;
                         }
                         
-                        if (!state.outputItem) {
-                            state.outputItem = { type: outputType, count: 1 };
-                        } else {
-                            state.outputItem.count++;
+                        if (outputType && outputType !== 'nothing') {
+                            if (!state.outputItem) {
+                                state.outputItem = { type: outputType, count: 1 };
+                            } else {
+                                state.outputItem.count++;
+                            }
                         }
                         AudioSynth.playHit(obj.pos);
                     }
@@ -13618,6 +19249,167 @@ export function initNeonBruiser(): Cleanup {
             }
         }
 
+        function removeCampfireFireMesh(obj) {
+            const existingFlames = obj.mesh.getObjectByName('campfireFlames');
+            if (existingFlames) obj.mesh.remove(existingFlames);
+            const existingLight = obj.mesh.getObjectByName('campfireLight');
+            if (existingLight) obj.mesh.remove(existingLight);
+        }
+
+        function updateCampfires(delta) {
+            placedObjects.forEach(obj => {
+                if (obj.type === 'campfire' || obj.type === 'fire') {
+                    if (obj.type === 'campfire') {
+                        if (typeof obj.burnTimeLeft === 'undefined') {
+                            obj.burnTimeLeft = 60.0;
+                        }
+                        obj.burnTimeLeft -= delta;
+                    }
+                    
+                    const flames = obj.mesh.getObjectByName('campfireFlames');
+                    if (flames && flames.userData && flames.userData.cubes) {
+                        const cubes = flames.userData.cubes;
+                        cubes.forEach(c => {
+                            c.mesh.position.y += c.speed * delta;
+                            
+                            const time = Date.now() * 0.005;
+                            c.mesh.position.x = c.offsetX + Math.sin(time + c.initialY) * 0.05;
+                            c.mesh.position.z = c.offsetZ + Math.cos(time + c.initialY) * 0.05;
+                            
+                            const heightFraction = (c.mesh.position.y - 0.15) / 0.45;
+                            const scale = Math.max(0.1, 1 - heightFraction);
+                            c.mesh.scale.set(scale, scale, scale);
+                            
+                            if (c.mesh.position.y > 0.6) {
+                                c.mesh.position.y = 0.15 + Math.random() * 0.1;
+                                c.mesh.scale.set(1, 1, 1);
+                            }
+                        });
+                    }
+                    
+                    const light = obj.mesh.getObjectByName('campfireLight');
+                    if (light) {
+                        light.intensity = 1.0 + Math.sin(Date.now() * 0.015) * 0.25;
+                    }
+                    
+                    if (obj.type === 'campfire' && obj.burnTimeLeft <= 0) {
+                        obj.burnTimeLeft = 0;
+                        obj.type = 'unlit_campfire';
+                        removeCampfireFireMesh(obj);
+                        addChatMessage("A campfire burned out!", "system");
+                        saveWorld(false);
+                    }
+                }
+            });
+        }
+
+        function isDimensionCave(val) {
+            return val === true || val === 'true';
+        }
+
+        function createCracksOverlay(w, h, d, hits) {
+            const points = [];
+            const numLines = hits * 5;
+            
+            const ew = w + 0.02;
+            const eh = h + 0.02;
+            const ed = d + 0.02;
+            
+            for (let i = 0; i < numLines; i++) {
+                const face = Math.floor(Math.random() * 6);
+                let x1 = 0, y1 = 0, z1 = 0, x2 = 0, y2 = 0, z2 = 0;
+                
+                if (face === 0) {
+                    x1 = (Math.random() - 0.5) * w;
+                    z1 = (Math.random() - 0.5) * d;
+                    x2 = x1 + (Math.random() - 0.5) * 0.25;
+                    z2 = z1 + (Math.random() - 0.5) * 0.25;
+                    y1 = y2 = eh / 2;
+                } else if (face === 1) {
+                    x1 = (Math.random() - 0.5) * w;
+                    z1 = (Math.random() - 0.5) * d;
+                    x2 = x1 + (Math.random() - 0.5) * 0.25;
+                    z2 = z1 + (Math.random() - 0.5) * 0.25;
+                    y1 = y2 = -eh / 2;
+                } else if (face === 2) {
+                    x1 = (Math.random() - 0.5) * w;
+                    y1 = (Math.random() - 0.5) * h;
+                    x2 = x1 + (Math.random() - 0.5) * 0.25;
+                    y2 = y1 + (Math.random() - 0.5) * 0.25;
+                    z1 = z2 = ed / 2;
+                } else if (face === 3) {
+                    x1 = (Math.random() - 0.5) * w;
+                    y1 = (Math.random() - 0.5) * h;
+                    x2 = x1 + (Math.random() - 0.5) * 0.25;
+                    y2 = y1 + (Math.random() - 0.5) * 0.25;
+                    z1 = z2 = -ed / 2;
+                } else if (face === 4) {
+                    y1 = (Math.random() - 0.5) * h;
+                    z1 = (Math.random() - 0.5) * d;
+                    x2 = ew / 2;
+                    y2 = y1 + (Math.random() - 0.5) * 0.25;
+                    z2 = z1 + (Math.random() - 0.5) * 0.25;
+                    x1 = ew / 2;
+                } else {
+                    y1 = (Math.random() - 0.5) * h;
+                    z1 = (Math.random() - 0.5) * d;
+                    x2 = -ew / 2;
+                    y2 = y1 + (Math.random() - 0.5) * 0.25;
+                    z2 = z1 + (Math.random() - 0.5) * 0.25;
+                    x1 = -ew / 2;
+                }
+                
+                points.push(new THREE.Vector3(x1, y1, z1));
+                points.push(new THREE.Vector3(x2, y2, z2));
+            }
+            
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const material = new THREE.LineBasicMaterial({
+                color: 0xff3300,
+                linewidth: 2,
+                toneMapped: false
+            });
+            return new THREE.LineSegments(geometry, material);
+        }
+
+        function updatePlacedObjectCracks(obj) {
+            if (!obj || !obj.mesh) return;
+            
+            const existingCracks = obj.mesh.getObjectByName('cracksOverlay');
+            if (existingCracks) {
+                obj.mesh.remove(existingCracks);
+            }
+            
+            const hits = obj.hits || 0;
+            if (hits <= 0) return;
+            
+            let w = 0.9, h = 0.9, d = 0.9;
+            
+            if (obj.type === 'crafting_bench') {
+                w = 1.6; h = 1.0; d = 0.7;
+            } else if (obj.type === 'door') {
+                w = 0.8; h = 1.8; d = 0.1;
+            } else if (obj.type === 'stone_slab') {
+                w = 0.9; h = 0.45; d = 0.9;
+            } else if (obj.type === 'bed') {
+                w = 0.9; h = 0.45; d = 1.6;
+            } else if (obj.type === 'chest') {
+                w = 0.8; h = 0.8; d = 0.8;
+            } else if (obj.type === 'furnace') {
+                w = 0.9; h = 0.9; d = 0.9;
+            } else if (obj.type === 'ladder') {
+                w = 0.8; h = 0.9; d = 0.1;
+            } else if (obj.type === 'wool') {
+                w = 0.9; h = 0.9; d = 0.9;
+            }
+            
+            const cracks = createCracksOverlay(w, h, d, hits);
+            cracks.name = 'cracksOverlay';
+            cracks.position.y = h / 2;
+            
+            obj.mesh.add(cracks);
+        }
+
         function updateBlockCracksDecay(delta) {
             const now = Date.now();
             
@@ -13636,6 +19428,9 @@ export function initNeonBruiser(): Cleanup {
             
             if (groundHits > 0 && lastGroundHitTime && now - lastGroundHitTime > 5000) {
                 groundHits = 0;
+            }
+            if (groundShovelHits > 0 && lastGroundShovelHitTime && now - lastGroundShovelHitTime > 5000) {
+                groundShovelHits = 0;
             }
             
             worldTrees.forEach(tree => {
@@ -13678,7 +19473,7 @@ export function initNeonBruiser(): Cleanup {
                     }
                     didAction = true;
                 } else if (aimedStone) {
-                    if (item === 'wooden_pickaxe' || item === 'stone_pickaxe' || item === 'iron_pickaxe') {
+                    if (item === 'wooden_pickaxe' || item === 'stone_pickaxe' || item === 'copper_pickaxe' || item === 'iron_pickaxe') {
                         if ((aimedStone.type === 'iron_ore' || aimedStone.type === 'coal_ore') && item === 'wooden_pickaxe') {
                             const nowMsg = Date.now();
                             if (!aimedStone.lastWarningTime || nowMsg - aimedStone.lastWarningTime > 2000) {
@@ -13687,7 +19482,8 @@ export function initNeonBruiser(): Cleanup {
                             }
                             AudioSynth.playHit(aimedStone.group.position);
                         } else {
-                            aimedStone.hits = (aimedStone.hits || 0) + 1;
+                            const increment = item === 'copper_pickaxe' ? 2 : 1;
+                            aimedStone.hits = (aimedStone.hits || 0) + increment;
                             aimedStone.lastHitTime = now;
                             AudioSynth.playHit(aimedStone.group.position);
                             if (aimedStone.hits >= 10) {
@@ -13697,11 +19493,12 @@ export function initNeonBruiser(): Cleanup {
                         didAction = true;
                     }
                 } else if (aimedTree) {
-                    if (item === 'wooden_axe' || item === 'stone_axe' || item === 'iron_axe') {
+                    if (item === 'wooden_axe' || item === 'stone_axe' || item === 'copper_axe' || item === 'iron_axe') {
                         if (aimedTree.isChopped) {
                             harvestLog(aimedTree);
                         } else {
-                            aimedTree.chopClicks = (aimedTree.chopClicks || 0) + 1;
+                            const increment = item === 'copper_axe' ? 2 : 1;
+                            aimedTree.chopClicks = (aimedTree.chopClicks || 0) + increment;
                             aimedTree.lastHitTime = now;
                             AudioSynth.playHit(aimedTree.group.position);
                             if (aimedTree.chopClicks >= 3) {
@@ -13712,12 +19509,14 @@ export function initNeonBruiser(): Cleanup {
                     }
                 } else {
                     const distToRocky = Math.sqrt(Math.pow(camera.position.x - 420, 2) + Math.pow(camera.position.z - 50, 2));
+                    const distToDesert = Math.sqrt(Math.pow(camera.position.x - 350, 2) + Math.pow(camera.position.z + 350, 2));
                     const lookDir = new THREE.Vector3();
                     camera.getWorldDirection(lookDir);
                     
                     if (distToRocky < 90 && lookDir.y < -0.4) {
-                        if (item === 'wooden_pickaxe' || item === 'stone_pickaxe' || item === 'iron_pickaxe') {
-                            groundHits = (groundHits || 0) + 1;
+                        if (item === 'wooden_pickaxe' || item === 'stone_pickaxe' || item === 'copper_pickaxe' || item === 'iron_pickaxe') {
+                            const increment = item === 'copper_pickaxe' ? 2 : 1;
+                            groundHits = (groundHits || 0) + increment;
                             lastGroundHitTime = now;
                             AudioSynth.playHit(camera.position.clone().add(new THREE.Vector3(0, -1.5, 0)));
                             
@@ -13733,6 +19532,94 @@ export function initNeonBruiser(): Cleanup {
                                 }
                             }
                             didAction = true;
+                        }
+                    } else if (distToDesert < 180 && lookDir.y < -0.4) {
+                        const hx = camera.position.x;
+                        const hz = camera.position.z;
+                        
+                        // Helper to find existing depth
+                        const prefix = `${hx.toFixed(1)},${hz.toFixed(1)},`;
+                        let currentDepth = 0;
+                        for (const key of minedDesertHoles) {
+                            if (key.startsWith(prefix) || key === `${hx.toFixed(1)},${hz.toFixed(1)}`) {
+                                const parts = key.split(',');
+                                currentDepth = parts.length === 3 ? parseInt(parts[2]) : 1;
+                                break;
+                            }
+                        }
+
+                        if (currentDepth < 2) {
+                            // Sand layer: requires shovel
+                            if (item && (item === 'wooden_shovel' || item === 'stone_shovel' || item === 'copper_shovel' || item === 'iron_shovel')) {
+                                const increment = item === 'copper_shovel' ? 2 : 1;
+                                groundShovelHits = (groundShovelHits || 0) + increment;
+                                lastGroundShovelHitTime = now;
+                                AudioSynth.playHit(camera.position.clone().add(new THREE.Vector3(0, -1.5, 0)));
+                                
+                                if (groundShovelHits >= 3) {
+                                    groundShovelHits = 0;
+                                    addMinedDesertHole(hx, hz);
+                                    spawnDroppedFood('sand', camera.position.clone().add(new THREE.Vector3(0, -1.0, 0)), 2.0);
+                                    addChatMessage("Mined sand from the desert!", "system");
+                                    updateTerrainMeshNear(hx, hz);
+                                    if (isHost) {
+                                        saveWorld(false);
+                                    }
+                                }
+                                didAction = true;
+                            } else if (item && (item === 'wooden_pickaxe' || item === 'stone_pickaxe' || item === 'copper_pickaxe' || item === 'iron_pickaxe')) {
+                                if (now - (lastGroundHitTime || 0) > 300) {
+                                    lastGroundHitTime = now;
+                                    AudioSynth.playHit(camera.position.clone().add(new THREE.Vector3(0, -1.5, 0)));
+                                    addChatMessage("Use a shovel to dig sand!", "system");
+                                }
+                                didAction = true;
+                            }
+                        } else {
+                            // Stone layer: requires pickaxe
+                            if (item && (item === 'wooden_pickaxe' || item === 'stone_pickaxe' || item === 'copper_pickaxe' || item === 'iron_pickaxe')) {
+                                const increment = item === 'copper_pickaxe' ? 2 : 1;
+                                groundHits = (groundHits || 0) + increment;
+                                lastGroundHitTime = now;
+                                AudioSynth.playHit(camera.position.clone().add(new THREE.Vector3(0, -1.5, 0)));
+                                
+                                if (groundHits >= 6) {
+                                    groundHits = 0;
+                                    addMinedDesertHole(hx, hz);
+                                    
+                                    const spawnPos = camera.position.clone().add(new THREE.Vector3(0, -1.0, 0));
+                                    const rand = Math.random();
+                                    if (rand < 0.15) {
+                                        spawnDroppedFood('raw_iron', spawnPos, 2.0);
+                                        addChatMessage("You mined raw iron from the desert stone!", "system");
+                                    } else if (rand < 0.30) {
+                                        spawnDroppedFood('coal', spawnPos, 2.0);
+                                        addChatMessage("You mined coal from the desert stone!", "system");
+                                    } else if (rand < 0.45) {
+                                        spawnDroppedFood('raw_copper', spawnPos, 2.0);
+                                        addChatMessage("You mined raw copper from the desert stone!", "system");
+                                    } else if (rand < 0.55) {
+                                        spawnDroppedFood('limestone', spawnPos, 2.0);
+                                        addChatMessage("You mined limestone from the desert stone!", "system");
+                                    } else {
+                                        spawnDroppedFood('stone', spawnPos, 2.0);
+                                        addChatMessage("Mined stone from the desert!", "system");
+                                    }
+                                    
+                                    updateTerrainMeshNear(hx, hz);
+                                    if (isHost) {
+                                        saveWorld(false);
+                                    }
+                                }
+                                didAction = true;
+                            } else if (item && (item === 'wooden_shovel' || item === 'stone_shovel' || item === 'copper_shovel' || item === 'iron_shovel')) {
+                                if (now - (lastGroundShovelHitTime || 0) > 300) {
+                                    lastGroundShovelHitTime = now;
+                                    AudioSynth.playHit(camera.position.clone().add(new THREE.Vector3(0, -1.5, 0)));
+                                    addChatMessage("You hit stone! Use a pickaxe to mine stone.", "system");
+                                }
+                                didAction = true;
+                            }
                         }
                     }
                 }
@@ -13758,6 +19645,19 @@ export function initNeonBruiser(): Cleanup {
         }
 
         function handleKeyEInteraction() {
+            if (ridingHorse) {
+                ridingHorse = false;
+                if (activeHorse) {
+                    activeHorse.isRidden = false;
+                    activeHorse.rider = null;
+                    activeHorse.mesh.position.y = getTerrainHeight(activeHorse.mesh.position.x, activeHorse.mesh.position.z);
+                    camera.position.y += 1.0;
+                    activeHorse = null;
+                }
+                addChatMessage("Dismounted horse.", "system");
+                return true;
+            }
+
             if (chestUIOpen) {
                 closeChestUI();
                 return true;
@@ -13843,19 +19743,67 @@ export function initNeonBruiser(): Cleanup {
                 openChestUI(aimedChest);
                 return true;
             }
-
+ 
             const aimedFurnace = getFurnaceAimTarget();
             if (aimedFurnace) {
                 openFurnaceUI(aimedFurnace);
                 return true;
             }
+ 
+            const aimedCampfire = getCampfireAimTarget();
+            if (aimedCampfire) {
+                interactWithCampfire(aimedCampfire);
+                return true;
+            }
 
             const aimedBed = getBedAimTarget();
             if (aimedBed) {
+                respawnPoint = {
+                    x: aimedBed.pos.x,
+                    y: aimedBed.pos.y,
+                    z: aimedBed.pos.z,
+                    inCave: isDimensionCave(aimedBed.inCave)
+                };
+                addChatMessage("Respawn point set!", "system");
+                saveWorld(false);
                 trySleepInBed();
                 return true;
             }
 
+            const aimedHorse = getHorseAimTarget();
+            if (aimedHorse) {
+                if (!aimedHorse.hasSaddle) {
+                    if (currentItem === 'saddle') {
+                        hotbarCounts[selectedHotbarIndex]--;
+                        if (hotbarCounts[selectedHotbarIndex] <= 0) {
+                            hotbarItems[selectedHotbarIndex] = null;
+                            hotbarCounts[selectedHotbarIndex] = 0;
+                            selectHotbarSlot(selectedHotbarIndex);
+                        } else {
+                            updateHotbarUI();
+                        }
+                        aimedHorse.hasSaddle = true;
+                        if (aimedHorse.mesh.userData.saddle) {
+                            aimedHorse.mesh.userData.saddle.visible = true;
+                        }
+                        AudioSynth.playPickup();
+                        addChatMessage("Placed saddle on the horse! Press E again to ride.", "system");
+                        return true;
+                    } else {
+                        addChatMessage("You need a Saddle to ride this horse! Craft one with 5 Leather and 1 Iron Ingot.", "system");
+                        return true;
+                    }
+                } else {
+                    ridingHorse = true;
+                    activeHorse = aimedHorse;
+                    aimedHorse.isRidden = true;
+                    aimedHorse.rider = 'local';
+                    aimedHorse.waitTime = 0;
+                    addChatMessage("Riding horse! WASD to steer, Press E to dismount.", "system");
+                    return true;
+                }
+            }
+ 
             return false;
         }
 
@@ -13882,6 +19830,9 @@ export function initNeonBruiser(): Cleanup {
             if (!activeChest.chestInventoryItems) {
                 activeChest.chestInventoryItems = new Array(27).fill(null);
                 activeChest.chestInventoryCounts = new Array(27).fill(0);
+            }
+            if (!activeChest.chestInventoryDurability) {
+                activeChest.chestInventoryDurability = new Array(27).fill(null);
             }
             
             const overlay = document.getElementById('chest-overlay');
@@ -13930,6 +19881,7 @@ export function initNeonBruiser(): Cleanup {
             chestUIOpen = false;
             
             requestPointerLock();
+            saveWorld(false);
         }
 
         function drawChestPlayerInventory() {
@@ -13940,14 +19892,17 @@ export function initNeonBruiser(): Cleanup {
             for (let i = 0; i < 27; i++) {
                 const item = inventoryItems[i];
                 const count = inventoryCounts[i];
+                const durability = inventoryDurability[i];
                 const icon = item ? getItemIconDataURL(item) : '';
                 const iconHTML = item ? `<img src="${icon}" class="slot-icon" />` : '';
                 const countHTML = (item && count > 1) ? `<span class="slot-count">${count}</span>` : '';
+                const durabilityBar = getDurabilityBarHTML(item, durability);
                 
                 html += `
                     <div class="inventory-slot" onclick="onChestInventoryClick('inventory', ${i})" style="width: 50px; height: 50px; border: 1px solid rgba(255, 0, 127, 0.2); border-radius: 6px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.35); position: relative; cursor: pointer;">
                         ${iconHTML}
                         ${countHTML}
+                        ${durabilityBar}
                     </div>
                 `;
             }
@@ -13955,9 +19910,11 @@ export function initNeonBruiser(): Cleanup {
             for (let i = 0; i < 9; i++) {
                 const item = hotbarItems[i];
                 const count = hotbarCounts[i];
+                const durability = hotbarDurability[i];
                 const icon = item ? getItemIconDataURL(item) : '';
                 const iconHTML = item ? `<img src="${icon}" class="slot-icon" />` : '';
                 const countHTML = (item && count > 1) ? `<span class="slot-count">${count}</span>` : '';
+                const durabilityBar = getDurabilityBarHTML(item, durability);
                 
                 const highlight = i === selectedHotbarIndex ? 'border-color: var(--magenta); box-shadow: 0 0 8px rgba(255, 0, 127, 0.4);' : '';
                 
@@ -13965,6 +19922,7 @@ export function initNeonBruiser(): Cleanup {
                     <div class="inventory-slot" onclick="onChestInventoryClick('hotbar', ${i})" style="width: 50px; height: 50px; border: 1px solid rgba(255, 0, 127, 0.2); border-radius: 6px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.35); position: relative; cursor: pointer; ${highlight}">
                         ${iconHTML}
                         ${countHTML}
+                        ${durabilityBar}
                     </div>
                 `;
             }
@@ -13978,18 +19936,22 @@ export function initNeonBruiser(): Cleanup {
             let html = '';
             const items = activeChest.chestInventoryItems || [];
             const counts = activeChest.chestInventoryCounts || [];
+            const durabilities = activeChest.chestInventoryDurability || (activeChest.chestInventoryDurability = new Array(27).fill(null));
             
             for (let i = 0; i < 27; i++) {
                 const item = items[i];
                 const count = counts[i];
+                const durability = durabilities[i];
                 const icon = item ? getItemIconDataURL(item) : '';
                 const iconHTML = item ? `<img src="${icon}" class="slot-icon" style="width: 32px; height: 32px; object-fit: contain;" />` : '';
                 const countHTML = (item && count > 1) ? `<span class="slot-count">${count}</span>` : '';
+                const durabilityBar = getDurabilityBarHTML(item, durability);
                 
                 html += `
                     <div class="inventory-slot" onclick="onChestSlotClick(${i})" style="width: 50px; height: 50px; border: 1px solid rgba(255, 0, 127, 0.2); border-radius: 6px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.35); position: relative; cursor: pointer;">
                         ${iconHTML}
                         ${countHTML}
+                        ${durabilityBar}
                     </div>
                 `;
             }
@@ -14000,17 +19962,22 @@ export function initNeonBruiser(): Cleanup {
             if (!activeChest) return;
             const items = activeChest.chestInventoryItems;
             const counts = activeChest.chestInventoryCounts;
+            const durabilities = activeChest.chestInventoryDurability || (activeChest.chestInventoryDurability = new Array(27).fill(null));
+            
+            const tool = isTool(heldItem?.type);
             
             if (heldItem) {
                 // Place item into chest slot
                 const tempType = items[index];
                 const tempCount = counts[index];
+                const tempDurability = durabilities[index];
                 
                 if (!tempType) {
                     items[index] = heldItem.type;
                     counts[index] = heldItem.count;
+                    durabilities[index] = heldItem.durability !== undefined ? heldItem.durability : null;
                     heldItem = null;
-                } else if (tempType === heldItem.type) {
+                } else if (tempType === heldItem.type && !tool) {
                     const canAdd = 64 - tempCount;
                     const toAdd = Math.min(canAdd, heldItem.count);
                     counts[index] += toAdd;
@@ -14019,14 +19986,20 @@ export function initNeonBruiser(): Cleanup {
                 } else {
                     items[index] = heldItem.type;
                     counts[index] = heldItem.count;
-                    heldItem = { type: tempType, count: tempCount };
+                    durabilities[index] = heldItem.durability !== undefined ? heldItem.durability : null;
+                    heldItem = { type: tempType, count: tempCount, durability: tempDurability };
                 }
             } else {
                 // Pick item up from chest slot
                 if (items[index]) {
-                    heldItem = { type: items[index], count: counts[index] };
+                    heldItem = { 
+                        type: items[index], 
+                        count: counts[index], 
+                        durability: durabilities[index] !== undefined ? durabilities[index] : null 
+                    };
                     items[index] = null;
                     counts[index] = 0;
+                    durabilities[index] = null;
                 }
             }
             
@@ -14088,6 +20061,7 @@ export function initNeonBruiser(): Cleanup {
             furnaceUIOpen = false;
             
             requestPointerLock();
+            saveWorld(false);
         }
 
         function onFurnaceSlotClick(slotName) {
@@ -14123,10 +20097,11 @@ export function initNeonBruiser(): Cleanup {
             } else if (slotName === 'fuel') {
                 if (heldItem) {
                     if (isFuel(heldItem.type)) {
+                        const tool = isTool(heldItem.type);
                         if (!state.fuelItem) {
-                            state.fuelItem = { type: heldItem.type, count: heldItem.count };
+                            state.fuelItem = { type: heldItem.type, count: heldItem.count, durability: heldItem.durability !== undefined ? heldItem.durability : null };
                             heldItem = null;
-                        } else if (state.fuelItem.type === heldItem.type) {
+                        } else if (state.fuelItem.type === heldItem.type && !tool) {
                             const canAdd = 64 - state.fuelItem.count;
                             const toAdd = Math.min(canAdd, heldItem.count);
                             state.fuelItem.count += toAdd;
@@ -14134,7 +20109,7 @@ export function initNeonBruiser(): Cleanup {
                             if (heldItem.count <= 0) heldItem = null;
                         } else {
                             const temp = state.fuelItem;
-                            state.fuelItem = { type: heldItem.type, count: heldItem.count };
+                            state.fuelItem = { type: heldItem.type, count: heldItem.count, durability: heldItem.durability !== undefined ? heldItem.durability : null };
                             heldItem = temp;
                         }
                     } else {
@@ -14142,7 +20117,7 @@ export function initNeonBruiser(): Cleanup {
                     }
                 } else {
                     if (state.fuelItem) {
-                        heldItem = { type: state.fuelItem.type, count: state.fuelItem.count };
+                        heldItem = { type: state.fuelItem.type, count: state.fuelItem.count, durability: state.fuelItem.durability !== undefined ? state.fuelItem.durability : null };
                         state.fuelItem = null;
                     }
                 }
@@ -14183,14 +20158,17 @@ export function initNeonBruiser(): Cleanup {
             for (let i = 0; i < 27; i++) {
                 const item = inventoryItems[i];
                 const count = inventoryCounts[i];
+                const durability = inventoryDurability[i];
                 const icon = item ? getItemIconDataURL(item) : '';
                 const iconHTML = item ? `<img src="${icon}" class="slot-icon" />` : '';
                 const countHTML = (item && count > 1) ? `<span class="slot-count">${count}</span>` : '';
+                const durabilityBar = getDurabilityBarHTML(item, durability);
                 
                 html += `
                     <div class="inventory-slot" onclick="onFurnaceInventoryClick('inventory', ${i})" style="width: 50px; height: 50px; border: 1px solid rgba(0, 240, 255, 0.2); border-radius: 6px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.35); position: relative; cursor: pointer;">
                         ${iconHTML}
                         ${countHTML}
+                        ${durabilityBar}
                     </div>
                 `;
             }
@@ -14198,9 +20176,11 @@ export function initNeonBruiser(): Cleanup {
             for (let i = 0; i < 9; i++) {
                 const item = hotbarItems[i];
                 const count = hotbarCounts[i];
+                const durability = hotbarDurability[i];
                 const icon = item ? getItemIconDataURL(item) : '';
                 const iconHTML = item ? `<img src="${icon}" class="slot-icon" />` : '';
                 const countHTML = (item && count > 1) ? `<span class="slot-count">${count}</span>` : '';
+                const durabilityBar = getDurabilityBarHTML(item, durability);
                 
                 const highlight = i === selectedHotbarIndex ? 'border-color: var(--cyan); box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);' : '';
                 
@@ -14208,6 +20188,7 @@ export function initNeonBruiser(): Cleanup {
                     <div class="inventory-slot" onclick="onFurnaceInventoryClick('hotbar', ${i})" style="width: 50px; height: 50px; border: 1px solid rgba(0, 240, 255, 0.2); border-radius: 6px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.35); position: relative; cursor: pointer; ${highlight}">
                         ${iconHTML}
                         ${countHTML}
+                        ${durabilityBar}
                     </div>
                 `;
             }
@@ -14231,7 +20212,13 @@ export function initNeonBruiser(): Cleanup {
             const fuelIconSpan = document.getElementById('furnace-fuel-icon');
             const fuelCountSpan = document.getElementById('furnace-fuel-count');
             if (state.fuelItem) {
-                fuelIconSpan.innerHTML = `<img src="${getItemIconDataURL(state.fuelItem.type)}" style="width: 32px; height: 32px; object-fit: contain;" />`;
+                const durBar = getDurabilityBarHTML(state.fuelItem.type, state.fuelItem.durability);
+                fuelIconSpan.innerHTML = `
+                    <div style="position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;">
+                        <img src="${getItemIconDataURL(state.fuelItem.type)}" style="width: 32px; height: 32px; object-fit: contain;" />
+                        ${durBar}
+                    </div>
+                `;
                 fuelCountSpan.innerText = state.fuelItem.count > 1 ? state.fuelItem.count : '';
             } else {
                 fuelIconSpan.innerHTML = '';
@@ -14274,12 +20261,71 @@ export function initNeonBruiser(): Cleanup {
         closeFurnaceUI,
         onFurnaceSlotClick,
         onFurnaceInventoryClick,
+        onChestInventoryClick,
+        onChestSlotClick,
+        closeChestUI,
     });
+
+    function autoSaveAndExit(force = false) {
+        if (!gameActive) return;
+        
+        const pauseMenu = document.getElementById('pause-menu');
+        const ingameSettings = document.getElementById('in-game-settings-screen');
+        const isPauseMenuOpen = pauseMenu && pauseMenu.style.display === 'flex';
+        const isIngameSettingsOpen = ingameSettings && ingameSettings.style.display === 'flex';
+        
+        if (!force && (isPauseMenuOpen || isIngameSettingsOpen)) {
+            return;
+        }
+
+        saveWorld(false);
+        gameActive = false;
+        exitPointerLock();
+        
+        if (pauseMenu) pauseMenu.style.display = 'none';
+        
+        if (elHud) elHud.style.display = 'none';
+        if (elCrosshair) elCrosshair.style.display = 'none';
+        if (elLobby) elLobby.style.display = 'flex';
+        
+        resetGameScene();
+        renderSavesList();
+    }
+
+    function handleVisibilityChange() {
+        if (document.visibilityState === 'hidden') {
+            autoSaveAndExit(false);
+        }
+    }
+
+    function handleBlur() {
+        autoSaveAndExit(false);
+    }
+
+    function handleUnload() {
+        autoSaveAndExit(true);
+    }
+
+    window.addEventListener('blur', handleBlur);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handleUnload);
+    window.addEventListener('beforeunload', handleUnload);
 
     renderSavesList();
     initPeer();
 
     return () => {
+        window.removeEventListener('blur', handleBlur);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        window.removeEventListener('pagehide', handleUnload);
+        window.removeEventListener('beforeunload', handleUnload);
+
+        if (peer) {
+            try {
+                peer.destroy();
+            } catch (e) {}
+        }
+        if (reconnectInterval) clearInterval(reconnectInterval);
         delete window.toggleInventoryOverlay;
         delete window.onInventorySlotClick;
         delete window.onArmorSlotClick;
@@ -14288,5 +20334,8 @@ export function initNeonBruiser(): Cleanup {
         delete window.closeFurnaceUI;
         delete window.onFurnaceSlotClick;
         delete window.onFurnaceInventoryClick;
+        delete window.onChestInventoryClick;
+        delete window.onChestSlotClick;
+        delete window.closeChestUI;
     };
 }

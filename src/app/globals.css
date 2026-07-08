@@ -19,6 +19,11 @@
             user-select: none;
         }
 
+        input, textarea {
+            user-select: text;
+            -webkit-user-select: text;
+        }
+
         body, html {
             width: 100%;
             height: 100%;
@@ -176,6 +181,17 @@
             box-shadow: 0 0 20px rgba(255, 0, 127, 0.5);
             transform: translateY(-2px);
         }
+
+        .btn:disabled {
+            background: rgba(40, 45, 55, 0.4) !important;
+            color: #5a6070 !important;
+            border: 1px solid rgba(255, 255, 255, 0.05) !important;
+            box-shadow: none !important;
+            cursor: not-allowed !important;
+            transform: none !important;
+            opacity: 0.6;
+        }
+
 
         .divider {
             display: flex;
@@ -993,6 +1009,28 @@
             background: var(--magenta);
             color: var(--white);
             box-shadow: 0 0 10px var(--magenta);
+        }
+
+        .btn-save-options {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #8a90a0;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 1.1rem;
+            cursor: pointer;
+            line-height: 1;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .btn-save-options:hover {
+            background: rgba(0, 240, 255, 0.1);
+            border-color: var(--cyan);
+            color: var(--cyan);
+            box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
         }
 
         @keyframes pulse {
