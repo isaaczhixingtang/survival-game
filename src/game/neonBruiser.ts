@@ -1196,13 +1196,13 @@ export function initNeonBruiser(): Cleanup {
         }
 
         function generateShortId() {
-            return generateFiveLetterWord();
+            return generateFiveLetterWord() + '-' + Math.floor(1000 + Math.random() * 9000);
         }
 
         // Initializing PeerJS
         let reconnectInterval = null;
         let PeerClass = null;
-        async function initPeer(forcedId = null) {
+        async function initPeer(forcedId = null, attempt = 0) {
             if (reconnectInterval) clearInterval(reconnectInterval);
 
             // If we have a peer with a different ID, destroy it first
@@ -1279,9 +1279,33 @@ export function initNeonBruiser(): Cleanup {
             peer.on('error', (err) => {
                 console.error("PeerJS Error:", err);
                 if (err.type === 'unavailable-id') {
-                    setTimeout(() => {
-                        initPeer(forcedId);
-                    }, 300);
+                    if (attempt < 2) {
+                        console.log(`ID ${shortId} is unavailable. Retrying attempt ${attempt + 1} in 1.5s...`);
+                        setTimeout(() => {
+                            initPeer(forcedId, attempt + 1);
+                        }, 1500);
+                    } else {
+                        // Generate a new ID to resolve collision
+                        const baseWord = forcedId ? forcedId.split('-')[0] : generateFiveLetterWord();
+                        const newId = `${baseWord}-${Math.floor(1000 + Math.random() * 9000)}`;
+                        console.warn(`ID ${shortId} remains unavailable. Generating new ID: ${newId}`);
+                        
+                        // If we are hosting a saved world, update the save file
+                        if (forcedId && activeWorldId) {
+                            const saves = getSavedWorlds();
+                            const idx = saves.findIndex(s => s.id === activeWorldId);
+                            if (idx >= 0) {
+                                saves[idx].mpCode = newId;
+                                saveWorldsList(saves);
+                            }
+                        }
+                        
+                        if (elStatus) elStatus.innerText = "Connection collision. New room code: " + newId;
+                        
+                        setTimeout(() => {
+                            initPeer(newId, 0);
+                        }, 500);
+                    }
                     return;
                 }
                 if (elStatus) elStatus.innerText = "Connection Error: " + err.type;
@@ -1410,6 +1434,12 @@ export function initNeonBruiser(): Cleanup {
 
             conn.on('data', (data) => {
                 handleNetworkMessage(data);
+            });
+
+            conn.on('error', (err) => {
+                console.error("Connection Error:", err);
+                if (elStatus) elStatus.innerText = "Connection failed: " + err.message;
+                handleDisconnect();
             });
 
             conn.on('close', () => {
@@ -1663,7 +1693,7 @@ export function initNeonBruiser(): Cleanup {
         const zombieRecoilMap = new Map();
 
         // Terrain & Decoration
-        const TERRAIN_SIZE = 1200;
+        const TERRAIN_SIZE = 1600;
         let terrainGeometry;
         const houseWindows = [];
         let starField;
@@ -2022,12 +2052,37 @@ export function initNeonBruiser(): Cleanup {
                 landH = Math.max(landH, -0.6 * (1 - w) + h7 * w);
             }
             
+            
+            // 8. 2nd Pine Island (behind the mountain) (center (350, 650), radius 120)
+            const d8 = Math.sqrt(Math.pow(x - 350, 2) + Math.pow(z - 650, 2));
+            if (d8 < 120) {
+                const w = Math.min(1.0, (120 - d8) / 30);
+                const h8 = 2.0 + Math.sin(x * 0.06) * Math.cos(z * 0.06) * 1.5;
+                landH = Math.max(landH, -6.0 * (1 - w) + h8 * w);
+            }
+            
+            // 9. Mushroom Island (just beside 2nd Pine Island) (center (520, 650), radius 120)
+            const d9 = Math.sqrt(Math.pow(x - 520, 2) + Math.pow(z - 650, 2));
+            if (d9 < 120) {
+                const w = Math.min(1.0, (120 - d9) / 30);
+                const h9 = 2.5 + Math.sin(x * 0.05) * Math.cos(z * 0.05) * 2.0;
+                landH = Math.max(landH, -6.0 * (1 - w) + h9 * w);
+            }
+            
             h = landH;
             
             // Transition to infinite noise-based terrain starting at 550m up to 650m
             if (r > 550) {
                 const noiseH = getNoiseTerrainHeight(x, z);
-                if (r < 650) {
+                
+                // Exempt Pine Island 2 and Mushroom Island from noise overwrite
+                let islandW = 0;
+                if (d8 < 120) islandW = Math.min(1.0, (120 - d8) / 30);
+                if (d9 < 120) islandW = Math.max(islandW, Math.min(1.0, (120 - d9) / 30));
+                
+                if (islandW > 0) {
+                    h = h * islandW + noiseH * (1.0 - islandW);
+                } else if (r < 650) {
                     const t = (r - 550) / 100;
                     h = h * (1 - t) + noiseH * t;
                 } else {
@@ -2102,6 +2157,8 @@ export function initNeonBruiser(): Cleanup {
             const d_village2 = Math.sqrt(Math.pow(x + 350, 2) + Math.pow(z - 250, 2));
             const d_rocky = Math.sqrt(Math.pow(x - 420, 2) + Math.pow(z - 50, 2));
             const d_reef = Math.sqrt(Math.pow(x - 0, 2) + Math.pow(z + 480, 2));
+            const d_pine2 = Math.sqrt(Math.pow(x - 350, 2) + Math.pow(z - 650, 2));
+            const d_mushroom = Math.sqrt(Math.pow(x - 520, 2) + Math.pow(z - 650, 2));
             
             const d_main = Math.sqrt(x * x + z * z);
             
@@ -2203,6 +2260,18 @@ export function initNeonBruiser(): Cleanup {
                 r_col = r_col * (1 - w) + 0.2 * w;
                 g_col = g_col * (1 - w) + 0.6 * w;
                 b_col = b_col * (1 - w) + 0.55 * w;
+            } else if (d_pine2 < 120) {
+                const w = Math.min(1.0, (120 - d_pine2) / 30);
+                r_col = r_col * (1 - w) + forestR * w;
+                g_col = g_col * (1 - w) + forestG * w;
+                b_col = b_col * (1 - w) + forestB * w;
+                skipOceanBlend = true;
+            } else if (d_mushroom < 120) {
+                const w = Math.min(1.0, (120 - d_mushroom) / 30);
+                r_col = r_col * (1 - w) + 0.38 * w;
+                g_col = g_col * (1 - w) + 0.28 * w;
+                b_col = b_col * (1 - w) + 0.38 * w;
+                skipOceanBlend = true;
             }
             
             if (y < -0.5 && !skipOceanBlend) {
@@ -2456,8 +2525,9 @@ export function initNeonBruiser(): Cleanup {
             scene.add(starField);
 
             // Heightmapped Terrain
-            terrainGeometry = new THREE.PlaneGeometry(TERRAIN_SIZE, TERRAIN_SIZE, 240, 240);
+            terrainGeometry = new THREE.PlaneGeometry(TERRAIN_SIZE, TERRAIN_SIZE, 320, 320);
             terrainGeometry.rotateX(-Math.PI / 2); // align flat
+            terrainGeometry.translate(200, 0, 200); // shift geometry center to (200, 200) to cover [-600, 1000]
             
             const positions = terrainGeometry.attributes.position.array;
             const colors = [];
@@ -2485,15 +2555,18 @@ export function initNeonBruiser(): Cleanup {
 
             // Massive Ocean water plane with a hole for the desert island
             const oceanShape = new THREE.Shape();
-            oceanShape.moveTo(-600, -600);
-            oceanShape.lineTo(600, -600);
-            oceanShape.lineTo(600, 600);
-            oceanShape.lineTo(-600, 600);
+            oceanShape.moveTo(-1200, -1200);
+            oceanShape.lineTo(1200, -1200);
+            oceanShape.lineTo(1200, 1200);
+            oceanShape.lineTo(-1200, 1200);
             oceanShape.closePath();
             
-            // Desert island center (350, -350). Since rotated around X by -90 deg, world Z of -350 maps to shape Y of 350.
+            // Desert island center (350, -350).
+            // Shifting ocean mesh to (200, -0.5, 200) to match new terrain bounds.
+            // Shape X: lx = 350 - 200 = 150.
+            // Shape Y: ly = 200 - (-350) = 550.
             const desertHole = new THREE.Path();
-            desertHole.absarc(350, 350, 170, 0, Math.PI * 2, true);
+            desertHole.absarc(150, 550, 170, 0, Math.PI * 2, true);
             oceanShape.holes.push(desertHole);
             
             const oceanGeo = new THREE.ShapeGeometry(oceanShape);
@@ -2507,7 +2580,7 @@ export function initNeonBruiser(): Cleanup {
             });
             const oceanMesh = new THREE.Mesh(oceanGeo, oceanMat);
             oceanMesh.rotateX(-Math.PI / 2);
-            oceanMesh.position.y = -0.5;
+            oceanMesh.position.set(200, -0.5, 200);
             oceanMesh.name = 'staticOcean';
             scene.add(oceanMesh);
 
@@ -3300,6 +3373,168 @@ export function initNeonBruiser(): Cleanup {
             }
         }
         
+        function spawnBigMushroom(tx, tz) {
+            const ty = getTerrainHeight(tx, tz);
+            if (ty <= WATER_Y) return;
+
+            const colors = [
+                0xeeb808, // Yellow
+                0x151515, // Black
+                0xd93838, // Red
+                0x228b22  // Green
+            ];
+            const colorHex = colors[Math.floor(Math.random() * colors.length)];
+            
+            const shroomGroup = new THREE.Group();
+            shroomGroup.position.set(tx, ty, tz);
+
+            // Stalk
+            const stalkMat = new THREE.MeshStandardMaterial({ color: 0xdddddd, roughness: 0.85 });
+            const stalkGeo = new THREE.CylinderGeometry(0.2, 0.28, 2.5, 8);
+            const stalk = new THREE.Mesh(stalkGeo, stalkMat);
+            stalk.position.y = 1.25;
+            stalk.castShadow = true;
+            shroomGroup.add(stalk);
+
+            // Cap
+            const capMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.6 });
+            const capGeo = new THREE.SphereGeometry(1.2, 12, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+            const cap = new THREE.Mesh(capGeo, capMat);
+            cap.position.y = 2.2;
+            cap.scale.set(1.1, 0.75, 1.1);
+            cap.castShadow = true;
+            shroomGroup.add(cap);
+
+            // Tiny spots
+            const spotMat = new THREE.MeshStandardMaterial({ color: 0xefefff, roughness: 0.8 });
+            const spotGeo = new THREE.BoxGeometry(0.15, 0.08, 0.15);
+            const spotPositions = [
+                { x: 0.4, y: 2.7, z: 0.4 },
+                { x: -0.4, y: 2.7, z: -0.4 },
+                { x: 0.6, y: 2.5, z: -0.3 },
+                { x: -0.6, y: 2.5, z: 0.3 },
+                { x: 0.0, y: 2.85, z: 0.0 },
+                { x: 0.2, y: 2.6, z: -0.5 },
+            ];
+            spotPositions.forEach(pos => {
+                const spot = new THREE.Mesh(spotGeo, spotMat);
+                spot.position.set(pos.x, pos.y, pos.z);
+                spot.rotation.x = pos.z * 0.8;
+                spot.rotation.z = -pos.x * 0.8;
+                shroomGroup.add(spot);
+            });
+
+            scene.add(shroomGroup);
+
+            const leaves = [cap];
+            worldTrees.push({
+                group: shroomGroup,
+                trunk: stalk,
+                leaves: leaves,
+                originalTrunkPos: stalk.position.clone(),
+                originalTrunkRot: stalk.rotation.clone(),
+                x: tx,
+                z: tz,
+                y: ty,
+                isChopped: false,
+                logsLeft: 3,
+                chopClicks: 0,
+                isFelling: false,
+                fellProgress: 0,
+                rotProgress: 0,
+                fallAngle: 0,
+                isMushroom: true,
+                mushroomColor: colorHex
+            });
+        }
+
+        const pineFoliageMat = new THREE.MeshStandardMaterial({ color: 0x0f3b1e, roughness: 0.8 });
+        const pineTrunkGeo = new THREE.CylinderGeometry(0.2, 0.3, 3.5, 8);
+        const pineTrunkMat = new THREE.MeshStandardMaterial({ color: 0x3d2314, roughness: 0.9 });
+
+        function spawnSinglePineTree(tx, tz) {
+            const ty = getTerrainHeight(tx, tz);
+            if (ty <= WATER_Y) return;
+
+            const treeGroup = new THREE.Group();
+            treeGroup.position.set(tx, ty, tz);
+
+            const trunk = new THREE.Mesh(pineTrunkGeo, pineTrunkMat);
+            trunk.position.y = 1.75;
+            trunk.castShadow = true;
+            treeGroup.add(trunk);
+
+            const leaves = [];
+            for (let j = 0; j < 3; j++) {
+                const leaf = new THREE.Mesh(new THREE.ConeGeometry(1.6 - j * 0.4, 2.2, 8), pineFoliageMat);
+                leaf.position.y = 3.0 + j * 1.3;
+                leaf.castShadow = true;
+                leaf.userData.originalColor = 0x0f3b1e;
+                treeGroup.add(leaf);
+                leaves.push(leaf);
+            }
+
+            scene.add(treeGroup);
+
+            worldTrees.push({
+                group: treeGroup,
+                trunk: trunk,
+                leaves: leaves,
+                originalTrunkPos: trunk.position.clone(),
+                originalTrunkRot: trunk.rotation.clone(),
+                x: tx,
+                z: tz,
+                y: ty,
+                isChopped: false,
+                logsLeft: 4,
+                chopClicks: 0,
+                isFelling: false,
+                fellProgress: 0,
+                rotProgress: 0,
+                fallAngle: 0
+            });
+        }
+
+        function spawnPineIsland2Resources() {
+            // Pine Island 2 center is (350, 650), radius 120
+            for (let i = 0; i < 35; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = Math.random() * 95;
+                const tx = 350 + Math.cos(angle) * dist;
+                const tz = 650 + Math.sin(angle) * dist;
+                
+                const coordKey = `${tx.toFixed(1)},${tz.toFixed(1)}`;
+                if (choppedTreeCoords.has(coordKey)) {
+                    continue;
+                }
+                
+                const ty = getTerrainHeight(tx, tz);
+                if (ty <= WATER_Y) { i--; continue; }
+                
+                spawnSinglePineTree(tx, tz);
+            }
+        }
+
+        function spawnMushroomIslandResources() {
+            // Mushroom Island center is (520, 650), radius 120
+            for (let i = 0; i < 40; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = Math.random() * 90;
+                const tx = 520 + Math.cos(angle) * dist;
+                const tz = 650 + Math.sin(angle) * dist;
+                
+                const coordKey = `${tx.toFixed(1)},${tz.toFixed(1)}`;
+                if (choppedTreeCoords.has(coordKey)) {
+                    continue;
+                }
+                
+                const ty = getTerrainHeight(tx, tz);
+                if (ty <= WATER_Y) { i--; continue; }
+                
+                spawnBigMushroom(tx, tz);
+            }
+        }
+        
         function resetWorldStones() {
             worldStones.forEach(stone => {
                 stone.hits = 0;
@@ -3851,52 +4086,6 @@ export function initNeonBruiser(): Cleanup {
             });
 
             // 11. Pine Trees and Forest (around spawn point)
-            const pineFoliageMat = new THREE.MeshStandardMaterial({ color: 0x0f3b1e, roughness: 0.8 });
-            const pineTrunkGeo = new THREE.CylinderGeometry(0.2, 0.3, 3.5, 8);
-            const pineTrunkMat = new THREE.MeshStandardMaterial({ color: 0x3d2314, roughness: 0.9 });
-
-            function spawnSinglePineTree(tx, tz) {
-                const ty = getTerrainHeight(tx, tz);
-                if (ty <= WATER_Y) return;
-
-                const treeGroup = new THREE.Group();
-                treeGroup.position.set(tx, ty, tz);
-
-                const trunk = new THREE.Mesh(pineTrunkGeo, pineTrunkMat);
-                trunk.position.y = 1.75;
-                trunk.castShadow = true;
-                treeGroup.add(trunk);
-
-                const leaves = [];
-                for (let j = 0; j < 3; j++) {
-                    const leaf = new THREE.Mesh(new THREE.ConeGeometry(1.6 - j * 0.4, 2.2, 8), pineFoliageMat);
-                    leaf.position.y = 3.0 + j * 1.3;
-                    leaf.castShadow = true;
-                    leaf.userData.originalColor = 0x0f3b1e;
-                    treeGroup.add(leaf);
-                    leaves.push(leaf);
-                }
-
-                scene.add(treeGroup);
-
-                worldTrees.push({
-                    group: treeGroup,
-                    trunk: trunk,
-                    leaves: leaves,
-                    originalTrunkPos: trunk.position.clone(),
-                    originalTrunkRot: trunk.rotation.clone(),
-                    x: tx,
-                    z: tz,
-                    y: ty,
-                    isChopped: false,
-                    logsLeft: 4,
-                    chopClicks: 0,
-                    isFelling: false,
-                    fellProgress: 0,
-                    rotProgress: 0,
-                    fallAngle: 0
-                });
-            }
 
             // Spawn pine trees close to spawn point (60, 20)
             for (let i = 0; i < 25; i++) {
@@ -3955,6 +4144,12 @@ export function initNeonBruiser(): Cleanup {
             
             // Spawn Rocky Plains resources
             spawnRockyPlainsResources();
+            
+            // Spawn Pine Island 2 resources (center 350, 650)
+            spawnPineIsland2Resources();
+            
+            // Spawn Mushroom Island resources (center 520, 650)
+            spawnMushroomIslandResources();
 
             // 11b. Spawn 50 more pine trees at the main spawn island (Plains: x > 20, d1 < 210)
             for (let i = 0; i < 50; i++) {
@@ -3975,14 +4170,14 @@ export function initNeonBruiser(): Cleanup {
                 spawnSinglePineTree(tx, tz);
             }
 
-            // 11c. Spawn 25 pine trees at the mountain island (center 250, 350, radius 180)
-            for (let i = 0; i < 25; i++) {
+            // 11c. Spawn 45 pine trees at the mountain island (center 250, 350, radius 180)
+            for (let i = 0; i < 45; i++) {
                 const angle = Math.random() * Math.PI * 2;
                 const radius = Math.random() * 140;
                 const tx = 250 + Math.cos(angle) * radius;
                 const tz = 350 + Math.sin(angle) * radius;
                 const ty = getTerrainHeight(tx, tz);
-                if (ty <= WATER_Y || ty > 50) { i--; continue; } // Don't spawn underwater or on extremely steep peaks
+                if (ty <= WATER_Y || ty > 65) { i--; continue; } // Don't spawn underwater or on extremely steep peaks
                 spawnSinglePineTree(tx, tz);
             }
         }
@@ -4360,7 +4555,12 @@ export function initNeonBruiser(): Cleanup {
                 if (staticOcean) {
                     staticOcean.visible = !isDimensionCave(playerInCave);
                     if (!isDimensionCave(playerInCave)) {
-                        staticOcean.position.set(playerCX * chunkWidth, -0.5, playerCZ * chunkWidth);
+                        const inStarter = (playerCX >= -1 && playerCX <= 2 && playerCZ >= -1 && playerCZ <= 2);
+                        if (inStarter) {
+                            staticOcean.position.set(200, -0.5, 200);
+                        } else {
+                            staticOcean.position.set(playerCX * chunkWidth, -0.5, playerCZ * chunkWidth);
+                        }
                     }
                 }
                 if (qTerrain) qTerrain.visible = false;
@@ -4542,7 +4742,7 @@ export function initNeonBruiser(): Cleanup {
                         }
                         
                     } else {
-                        const inStarterRegion = Math.abs(c.cx) <= 1 && Math.abs(c.cz) <= 1;
+                        const inStarterRegion = c.cx >= -1 && c.cx <= 2 && c.cz >= -1 && c.cz <= 2;
                         
                         if (!inStarterRegion) {
                             const chunkMesh = generateChunkMesh(c.cx, c.cz);
@@ -5771,7 +5971,13 @@ export function initNeonBruiser(): Cleanup {
                         savannavillage: { x: -350, z: 250 },
                         quantum: { x: 2000, z: 0 },
                         rocky: { x: 420, z: 50 },
-                        reef: { x: 0, z: -480 }
+                        reef: { x: 0, z: -480 },
+                        pine2: { x: 350, z: 650 },
+                        pinecone2: { x: 350, z: 650 },
+                        secondpine: { x: 350, z: 650 },
+                        secondpinecone: { x: 350, z: 650 },
+                        mushroom: { x: 520, z: 650 },
+                        mushroomisland: { x: 520, z: 650 }
                     };
                     const coords = targetCoords[loc];
                     if (coords) {
@@ -5814,7 +6020,7 @@ export function initNeonBruiser(): Cleanup {
                         
                         addChatMessage("Teleported to " + loc + " (" + tx + ", " + tz + ").", "system");
                     } else {
-                        addChatMessage("Usage: /tp [dunes|forest|cherry|mountain|savanna|quantum|rocky|reef]", "system");
+                        addChatMessage("Usage: /tp [dunes|forest|cherry|mountain|savanna|quantum|rocky|reef|pine2|mushroom]", "system");
                     }
                 } else {
                     addChatMessage(text, 'local');
@@ -6513,7 +6719,31 @@ export function initNeonBruiser(): Cleanup {
             choppedTreeCoords.add(coordKey);
             
             tree.isChopped = true;
-            tree.logsLeft = 4;
+            if (tree.isMushroom) {
+                tree.logsLeft = 3;
+                
+                // Spawn 3 to 5 mushroom cap items around
+                const capColors = {
+                    0xeeb808: 'yellow_mushroom',
+                    0x151515: 'black_mushroom',
+                    0x228b22: 'green_mushroom',
+                    0xd93838: 'red_mushroom'
+                };
+                const shroomItem = capColors[tree.mushroomColor] || 'red_mushroom';
+                const count = 3 + Math.floor(Math.random() * 3);
+                
+                for (let j = 0; j < count; j++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const r = 1.0 + Math.random() * 2.0;
+                    const spawnPos = new THREE.Vector3().copy(tree.group.position);
+                    spawnPos.x += Math.cos(angle) * r;
+                    spawnPos.z += Math.sin(angle) * r;
+                    spawnPos.y += 0.3;
+                    spawnDroppedFood(shroomItem, spawnPos);
+                }
+            } else {
+                tree.logsLeft = 4;
+            }
 
             if (tree.isBurning) {
                 tree.isBurning = false;
@@ -6523,7 +6753,7 @@ export function initNeonBruiser(): Cleanup {
                 const light = tree.group.getObjectByName('treeLight');
                 if (light) tree.group.remove(light);
                 if (tree.trunk && tree.trunk.material) {
-                    tree.trunk.material.color.setHex(0x111111);
+                     tree.trunk.material.color.setHex(0x111111);
                 }
             }
 
@@ -6544,6 +6774,8 @@ export function initNeonBruiser(): Cleanup {
             
             if (tree.isBurned) {
                 addChatMessage("Burned tree chopped down! Click the fallen trunk to get charcoal.", "system");
+            } else if (tree.isMushroom) {
+                addChatMessage("Giant mushroom chopped down! Click the fallen stalk to get wood.", "system");
             } else {
                 addChatMessage("Tree chopped down! Click the fallen trunk to get logs.", "system");
             }
@@ -6563,13 +6795,18 @@ export function initNeonBruiser(): Cleanup {
             tree.logsLeft--;
             AudioSynth.playHit(tree.group.position);
             
-            // Visual feedback: shrink the trunk log
-            tree.trunk.scale.y = tree.logsLeft / 4;
-            tree.trunk.position.y = 1.75 * (tree.logsLeft / 4);
+            // Visual feedback: shrink the trunk log / stalk
+            const maxLogs = tree.isMushroom ? 3 : 4;
+            const scaleFactor = tree.logsLeft / maxLogs;
+            tree.trunk.scale.y = scaleFactor;
+            
+            const defaultTrunkY = tree.isMushroom ? 1.25 : 1.75;
+            tree.trunk.position.y = defaultTrunkY * scaleFactor;
             
             // Spawn a dropped log item
             const spawnPos = new THREE.Vector3().copy(tree.group.position);
-            const L = 3.5 * (tree.logsLeft / 4);
+            const totalLength = tree.isMushroom ? 2.5 : 3.5;
+            const L = totalLength * scaleFactor;
             const dx = Math.cos(tree.fallAngle) * L;
             const dz = Math.sin(tree.fallAngle) * L;
             spawnPos.x += dx;
@@ -6580,6 +6817,8 @@ export function initNeonBruiser(): Cleanup {
             
             if (tree.isBurned) {
                 addChatMessage(`Harvested a piece of charcoal! (${tree.logsLeft} left)`, "system");
+            } else if (tree.isMushroom) {
+                addChatMessage(`Chopped out wood from the stalk! (${tree.logsLeft} left)`, "system");
             } else {
                 addChatMessage(`Chopped out a log! (${tree.logsLeft} logs left)`, "system");
             }
@@ -6811,6 +7050,9 @@ export function initNeonBruiser(): Cleanup {
                                     z.stateTime = 0;
                                     spawnDirtParticles(z.mesh.position, 12);
                                     AudioSynth.playClack(z.mesh.position);
+                                }
+                                if (z.type === 'mimic_mushroom') {
+                                    makeMimicMushroomFlee(z, myX, myZ, kDir.x, kDir.y);
                                 }
                                 z.kx = kDir.x;
                                 z.kz = kDir.y;
@@ -7475,6 +7717,10 @@ export function initNeonBruiser(): Cleanup {
             
             const savedCycleMs = (Date.now() + timeOffset) % (CYCLE_DURATION * 1000);
             
+            const saves = getSavedWorlds();
+            const existingSave = saves.find(s => s.id === saveId);
+            const mpCode = existingSave ? existingSave.mpCode : generateShortId();
+            
             const saveObj = {
                 id: saveId,
                 worldName: currentWorldName,
@@ -7484,6 +7730,7 @@ export function initNeonBruiser(): Cleanup {
                 physicsMode: physicsMode,
                 date: new Date().toLocaleString(),
                 savedCycleMs: savedCycleMs,
+                mpCode: mpCode,
                 
                 myHealth: myHealth,
                 hunger: hunger,
@@ -7517,7 +7764,6 @@ export function initNeonBruiser(): Cleanup {
                   obtainedItems: Array.from(obtainedItems)
              };
             
-             const saves = getSavedWorlds();
              const index = saves.findIndex(s => s.id === saveId);
              if (index >= 0) {
                  saves[index] = saveObj;
@@ -7538,7 +7784,7 @@ export function initNeonBruiser(): Cleanup {
              if (!save) return;
              
              if (!save.mpCode) {
-                 save.mpCode = generateFiveLetterWord();
+                 save.mpCode = generateShortId();
                  const idx = saves.findIndex(s => s.id === saveId);
                  if (idx >= 0) {
                      saves[idx].mpCode = save.mpCode;
@@ -7731,7 +7977,7 @@ export function initNeonBruiser(): Cleanup {
  
           function showMultiplayerCodeModal(save) {
               if (!save.mpCode) {
-                  save.mpCode = generateFiveLetterWord();
+                  save.mpCode = generateShortId();
                   const saves = getSavedWorlds();
                   const idx = saves.findIndex(s => s.id === save.id);
                   if (idx >= 0) {
@@ -7818,7 +8064,7 @@ export function initNeonBruiser(): Cleanup {
               let savesUpdated = false;
               saves.forEach(save => {
                   if (!save.mpCode) {
-                      save.mpCode = generateFiveLetterWord();
+                      save.mpCode = generateShortId();
                       savesUpdated = true;
                   }
               });
@@ -8194,6 +8440,7 @@ export function initNeonBruiser(): Cleanup {
                 spawnVillagers(villagerData);
                 spawnInitialAnimals();
                 spawnCrawlingTrees();
+                spawnMushroomMimics();
                 
                 if (isConnected) {
                     sendNetworkMessage({
@@ -8335,6 +8582,7 @@ export function initNeonBruiser(): Cleanup {
             spawnInitialAnimals();
             if (isHost) {
                 spawnCrawlingTrees();
+                spawnMushroomMimics();
             }
         }
 
@@ -8677,7 +8925,7 @@ export function initNeonBruiser(): Cleanup {
                         activeIds.add(zd.id);
                         let mesh = clientZombies.get(zd.id);
                         if (!mesh) {
-                            mesh = zd.type === 'creeper' ? createCreeperMesh() : (zd.type === 'skeleton' ? createSkeletonMesh() : (zd.type === 'crawling_tree' ? createCrawlingTreeMesh() : createZombieMesh()));
+                            mesh = zd.type === 'creeper' ? createCreeperMesh() : (zd.type === 'skeleton' ? createSkeletonMesh() : (zd.type === 'crawling_tree' ? createCrawlingTreeMesh() : (zd.type === 'mimic_mushroom' ? createMimicMushroomMesh(zd.mushroomColor || 0xd93838) : createZombieMesh())));
                             mesh.zombieType = zd.type || 'zombie';
                             scene.add(mesh);
                             clientZombies.set(zd.id, mesh);
@@ -8689,7 +8937,7 @@ export function initNeonBruiser(): Cleanup {
                         mesh.position.set(zd.x, zd.y, zd.z);
                         mesh.rotation.y = zd.ry;
                         
-                        if (mesh.zombieType === 'crawling_tree') {
+                        if (mesh.zombieType === 'crawling_tree' || mesh.zombieType === 'mimic_mushroom') {
                             mesh.crawlingTreeState = zd.crawlingTreeState || 'standing';
                             mesh.attackAnimProgress = zd.attackAnimProgress || 0;
                             return;
@@ -8841,6 +9089,9 @@ export function initNeonBruiser(): Cleanup {
                                 z.stateTime = 0;
                                 spawnDirtParticles(z.mesh.position, 12);
                                 AudioSynth.playClack(z.mesh.position);
+                            }
+                            if (z.type === 'mimic_mushroom') {
+                                makeMimicMushroomFlee(z, undefined, undefined, msg.kx, msg.kz);
                             }
                             z.kx = msg.kx;
                             z.kz = msg.kz;
@@ -9169,7 +9420,7 @@ export function initNeonBruiser(): Cleanup {
                 updateBees(delta);
             } else if (!isHost && gameActive) {
                 clientZombies.forEach((mesh) => {
-                    if (mesh.zombieType === 'crawling_tree') {
+                    if (mesh.zombieType === 'crawling_tree' || mesh.zombieType === 'mimic_mushroom') {
                         animateCrawlingTreeMesh(mesh, mesh.crawlingTreeState || 'standing', mesh.attackAnimProgress || 0, delta, Date.now());
                     }
                 });
@@ -10033,22 +10284,22 @@ export function initNeonBruiser(): Cleanup {
             if (isHost) {
                 zombies.forEach(z => {
                     if (z.isDead) return;
-                    if (z.type === 'crawling_tree' && z.state === 'standing') return;
+                    if ((z.type === 'crawling_tree' || z.type === 'mimic_mushroom') && z.state === 'standing') return;
                     
                     const zx = mapX(z.mesh.position.x);
                     const zz = mapZ(z.mesh.position.z);
-                    mapCtx.fillStyle = z.type === 'creeper' ? '#ff3300' : (z.type === 'skeleton' ? '#e6e6e6' : (z.type === 'crawling_tree' ? '#2d5a27' : '#39ff14'));
+                    mapCtx.fillStyle = z.type === 'creeper' ? '#ff3300' : (z.type === 'skeleton' ? '#e6e6e6' : (z.type === 'crawling_tree' ? '#2d5a27' : (z.type === 'mimic_mushroom' ? '#ff00a0' : '#39ff14')));
                     mapCtx.beginPath();
                     mapCtx.arc(zx, zz, 4.5, 0, 2 * Math.PI);
                     mapCtx.fill();
                 });
             } else {
                 clientZombies.forEach(mesh => {
-                    if (mesh.zombieType === 'crawling_tree' && mesh.crawlingTreeState === 'standing') return;
+                    if ((mesh.zombieType === 'crawling_tree' || mesh.zombieType === 'mimic_mushroom') && mesh.crawlingTreeState === 'standing') return;
                     
                     const zx = mapX(mesh.position.x);
                     const zz = mapZ(mesh.position.z);
-                    mapCtx.fillStyle = mesh.zombieType === 'creeper' ? '#ff3300' : (mesh.zombieType === 'skeleton' ? '#e6e6e6' : (mesh.zombieType === 'crawling_tree' ? '#2d5a27' : '#39ff14'));
+                    mapCtx.fillStyle = mesh.zombieType === 'creeper' ? '#ff3300' : (mesh.zombieType === 'skeleton' ? '#e6e6e6' : (mesh.zombieType === 'crawling_tree' ? '#2d5a27' : (mesh.zombieType === 'mimic_mushroom' ? '#ff00a0' : '#39ff14')));
                     mapCtx.beginPath();
                     mapCtx.arc(zx, zz, 4.5, 0, 2 * Math.PI);
                     mapCtx.fill();
@@ -10655,6 +10906,9 @@ export function initNeonBruiser(): Cleanup {
                              });
 
                             z.health = Math.max(0, z.health - 15);
+                            if (z.type === 'mimic_mushroom') {
+                                makeMimicMushroomFlee(z, undefined, undefined, kVel.x, kVel.z);
+                            }
                             z.kx = kVel.x * 12.0;
                             z.kz = kVel.z * 12.0;
                             if (z.health <= 0) {
@@ -12172,10 +12426,18 @@ export function initNeonBruiser(): Cleanup {
             copper_ingot: '🪙',
             sand: '🏜️',
             gunpowder: '🧂',
-            tnt: '🧨'
+            tnt: '🧨',
+            yellow_mushroom: '🍄',
+            black_mushroom: '🍄',
+            red_mushroom: '🍄',
+            green_mushroom: '🍄'
         };
         
         const ITEM_NAMES = {
+            yellow_mushroom: 'Yellow Mushroom',
+            black_mushroom: 'Black Mushroom',
+            red_mushroom: 'Red Mushroom',
+            green_mushroom: 'Green Mushroom',
             charcoal: 'Charcoal',
             campfire: 'Campfire',
             unlit_campfire: 'Unlit Campfire',
@@ -13855,6 +14117,28 @@ export function initNeonBruiser(): Cleanup {
                     group.add(baseMesh);
                 }
             }
+            else if (type.endsWith('_mushroom')) {
+                let colorHex = 0xd93838; // Red default
+                if (type === 'yellow_mushroom') colorHex = 0xeeb808;
+                else if (type === 'black_mushroom') colorHex = 0x151515;
+                else if (type === 'green_mushroom') colorHex = 0x228b22;
+                
+                const stalkMat = new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.85 });
+                const capMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.6 });
+                
+                // Tiny stalk
+                const stalk = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.025, 0.14, 5), stalkMat);
+                stalk.position.y = 0.07;
+                stalk.castShadow = true;
+                group.add(stalk);
+                
+                // Tiny cap
+                const cap = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8, 0, Math.PI * 2, 0, Math.PI / 2), capMat);
+                cap.position.y = 0.12;
+                cap.scale.set(1.1, 0.8, 1.1);
+                cap.castShadow = true;
+                group.add(cap);
+            }
             else {
                 let color = 0x888888;
                 if (type.includes('leather')) color = 0x8b5a2b;
@@ -15414,6 +15698,9 @@ export function initNeonBruiser(): Cleanup {
                             // Apply knockback to zombie
                             const zkDir = new THREE.Vector2(zdx, zdz).normalize();
                             const zKnockback = 18.0 * (1.0 - zdistXZ / maxRadius);
+                            if (z.type === 'mimic_mushroom') {
+                                makeMimicMushroomFlee(z, ex, ez, zkDir.x, zkDir.y);
+                            }
                             z.kx = zkDir.x * zKnockback;
                             z.kz = zkDir.y * zKnockback;
                             
@@ -15557,7 +15844,120 @@ export function initNeonBruiser(): Cleanup {
             return treeGroup;
         }
 
+        function createMimicMushroomMesh(colorHex) {
+            const group = new THREE.Group();
+            group.zombieType = 'mimic_mushroom';
+            
+            // Stalk (like trunk)
+            const stalkMat = new THREE.MeshStandardMaterial({ color: 0xdddddd, roughness: 0.85 }); // light grey stalk
+            const stalkGeo = new THREE.CylinderGeometry(0.2, 0.28, 2.5, 8);
+            const stalk = new THREE.Mesh(stalkGeo, stalkMat);
+            stalk.position.y = 1.25;
+            stalk.castShadow = true;
+            group.add(stalk);
+            
+            // Mushroom Cap
+            const capMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.6 });
+            const capGeo = new THREE.SphereGeometry(1.2, 12, 12, 0, Math.PI * 2, 0, Math.PI / 2); // hemisphere cap
+            const cap = new THREE.Mesh(capGeo, capMat);
+            cap.position.y = 2.2;
+            cap.scale.set(1.1, 0.75, 1.1); // flatten it slightly
+            cap.castShadow = true;
+            group.add(cap);
+            
+            // Tiny spots on the cap (white/yellowish boxes/spheres)
+            const spotMat = new THREE.MeshStandardMaterial({ color: 0xefefff, roughness: 0.8 });
+            const spots = [];
+            const spotGeo = new THREE.BoxGeometry(0.15, 0.08, 0.15);
+            // Place 6 spots on the cap
+            const spotPositions = [
+                { x: 0.4, y: 2.7, z: 0.4 },
+                { x: -0.4, y: 2.7, z: -0.4 },
+                { x: 0.6, y: 2.5, z: -0.3 },
+                { x: -0.6, y: 2.5, z: 0.3 },
+                { x: 0.0, y: 2.85, z: 0.0 },
+                { x: 0.2, y: 2.6, z: -0.5 },
+            ];
+            spotPositions.forEach(pos => {
+                const spot = new THREE.Mesh(spotGeo, spotMat);
+                spot.position.set(pos.x, pos.y, pos.z);
+                // Rotate spots slightly to align with hemisphere
+                spot.rotation.x = pos.z * 0.8;
+                spot.rotation.z = -pos.x * 0.8;
+                group.add(spot);
+                spots.push(spot);
+            });
+            
+            // 4 Crawling Legs
+            const legMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, roughness: 0.95 }); // lighter stalk color for legs
+            const legGeo = new THREE.BoxGeometry(0.12, 0.6, 0.12);
+            
+            // Front-Left Leg
+            const legFL = new THREE.Mesh(legGeo, legMat);
+            legFL.position.set(-0.25, 0.3, 0.25);
+            legFL.castShadow = true;
+            group.add(legFL);
+            
+            // Front-Right Leg
+            const legFR = new THREE.Mesh(legGeo, legMat);
+            legFR.position.set(0.25, 0.3, 0.25);
+            legFR.castShadow = true;
+            group.add(legFR);
+            
+            // Back-Left Leg
+            const legBL = new THREE.Mesh(legGeo, legMat);
+            legBL.position.set(-0.25, 0.3, -0.25);
+            legBL.castShadow = true;
+            group.add(legBL);
+            
+            // Back-Right Leg
+            const legBR = new THREE.Mesh(legGeo, legMat);
+            legBR.position.set(0.25, 0.3, -0.25);
+            legBR.castShadow = true;
+            group.add(legBR);
+            
+            // Initialize legs as invisible (standing state)
+            legFL.visible = false;
+            legFR.visible = false;
+            legBL.visible = false;
+            legBR.visible = false;
+            
+            legFL.scale.set(0.01, 0.01, 0.01);
+            legFR.scale.set(0.01, 0.01, 0.01);
+            legBL.scale.set(0.01, 0.01, 0.01);
+            legBR.scale.set(0.01, 0.01, 0.01);
+            
+            // Store references in userData so animation function can use them
+            group.userData = {
+                type: 'mimic_mushroom',
+                trunk: stalk,
+                leaves: [cap, ...spots],
+                legFL: legFL,
+                legFR: legFR,
+                legBL: legBL,
+                legBR: legBR
+            };
+            
+            return group;
+        }
+
         function spawnCrawlingTrees() {
+            function findNearbyLand(x, z, maxDist = 30) {
+                let ty = getTerrainHeight(x, z, false);
+                if (ty > WATER_Y) return { x, y: ty, z };
+                for (let r = 2; r <= maxDist; r += 2) {
+                    for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 4) {
+                        const tx = x + Math.cos(angle) * r;
+                        const tz = z + Math.sin(angle) * r;
+                        const h = getTerrainHeight(tx, tz, false);
+                        if (h > WATER_Y) {
+                            return { x: tx, y: h, z: tz };
+                        }
+                    }
+                }
+                return null;
+            }
+
             // Define 12 coordinates around spawn (60, 20)
             const coords = [
                 { x: 45, z: 10 },
@@ -15574,11 +15974,22 @@ export function initNeonBruiser(): Cleanup {
                 { x: 85, z: -5 }
             ];
             
+            // Add 5 coordinates on the 2nd Pine Island (350, 650)
+            const pine2Coords = [
+                { x: 330, z: 620 },
+                { x: 370, z: 640 },
+                { x: 350, z: 670 },
+                { x: 320, z: 660 },
+                { x: 360, z: 630 }
+            ];
+            
             coords.forEach((c, idx) => {
-                const tx = c.x;
-                const tz = c.z;
-                const ty = getTerrainHeight(tx, tz, false);
-                if (ty <= WATER_Y) return;
+                const land = findNearbyLand(c.x, c.z, 30);
+                if (!land) return;
+                
+                const tx = land.x;
+                const tz = land.z;
+                const ty = land.y;
                 
                 const id = `crawling_tree_${idx}`;
                 // Avoid duplicating if already exists
@@ -15612,11 +16023,154 @@ export function initNeonBruiser(): Cleanup {
                     isDead: false,
                     deathTime: 0,
                     
-                    // Crawling tree state machine
                     state: 'standing',
                     stateTime: 0,
                     chaseDuration: 15,
-                    attackAnimProgress: 0
+                    attackAnimProgress: 0,
+                    isWandering: false,
+                    wanderTargetX: 0,
+                    wanderTargetZ: 0,
+                    isFleeing: false,
+                    nextWanderTime: Date.now() + (20000 + Math.random() * 40000)
+                });
+            });
+
+            pine2Coords.forEach((c, idx) => {
+                const land = findNearbyLand(c.x, c.z, 30);
+                if (!land) return;
+                
+                const tx = land.x;
+                const tz = land.z;
+                const ty = land.y;
+                
+                const id = `crawling_tree_p2_${idx}`;
+                if (zombies.some(z => z.id === id)) return;
+                
+                const mesh = createCrawlingTreeMesh();
+                mesh.zombieType = 'crawling_tree';
+                mesh.position.set(tx, ty, tz);
+                scene.add(mesh);
+                
+                zombies.push({
+                    id: id,
+                    mesh: mesh,
+                    type: 'crawling_tree',
+                    x: tx,
+                    y: ty,
+                    z: tz,
+                    startX: tx,
+                    startY: ty,
+                    startZ: tz,
+                    inCave: false,
+                    chunkKey: 'pine_island_2',
+                    ry: 0,
+                    lastAttackTime: 0,
+                    isAttacking: false,
+                    attackAnimTime: 0,
+                    health: 99999,
+                    burnTime: 0,
+                    kx: 0,
+                    kz: 0,
+                    isDead: false,
+                    deathTime: 0,
+                    
+                    state: 'standing',
+                    stateTime: 0,
+                    chaseDuration: 15,
+                    attackAnimProgress: 0,
+                    isWandering: false,
+                    wanderTargetX: 0,
+                    wanderTargetZ: 0,
+                    isFleeing: false,
+                    nextWanderTime: Date.now() + (20000 + Math.random() * 40000)
+                });
+            });
+        }
+
+        function spawnMushroomMimics() {
+            function findNearbyLand(x, z, maxDist = 30) {
+                let ty = getTerrainHeight(x, z, false);
+                if (ty > WATER_Y) return { x, y: ty, z };
+                for (let r = 2; r <= maxDist; r += 2) {
+                    for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 4) {
+                        const tx = x + Math.cos(angle) * r;
+                        const tz = z + Math.sin(angle) * r;
+                        const h = getTerrainHeight(tx, tz, false);
+                        if (h > WATER_Y) {
+                            return { x: tx, y: h, z: tz };
+                        }
+                    }
+                }
+                return null;
+            }
+
+            // Coords around Mushroom Island (520, 650)
+            const coords = [
+                { x: 500, z: 620 },
+                { x: 540, z: 640 },
+                { x: 520, z: 670 },
+                { x: 490, z: 650 },
+                { x: 530, z: 630 },
+                { x: 510, z: 660 }
+            ];
+            const colors = [
+                0xeeb808, // Yellow
+                0x151515, // Black
+                0xd93838, // Red
+                0x228b22  // Green
+            ];
+            
+            coords.forEach((c, idx) => {
+                const land = findNearbyLand(c.x, c.z, 30);
+                if (!land) return;
+                
+                const tx = land.x;
+                const tz = land.z;
+                const ty = land.y;
+                
+                const id = `mimic_mushroom_${idx}`;
+                // Avoid duplicating if already exists
+                if (zombies.some(z => z.id === id)) return;
+                
+                const colorHex = colors[Math.floor(Math.random() * colors.length)];
+                const mesh = createMimicMushroomMesh(colorHex);
+                mesh.zombieType = 'mimic_mushroom';
+                mesh.position.set(tx, ty, tz);
+                scene.add(mesh);
+                
+                zombies.push({
+                    id: id,
+                    mesh: mesh,
+                    type: 'mimic_mushroom',
+                    mushroomColor: colorHex,
+                    x: tx,
+                    y: ty,
+                    z: tz,
+                    startX: tx,
+                    startY: ty,
+                    startZ: tz,
+                    inCave: false,
+                    chunkKey: 'mushroom_island',
+                    ry: 0,
+                    lastAttackTime: 0,
+                    isAttacking: false,
+                    attackAnimTime: 0,
+                    health: 99999, // Unkillable
+                    burnTime: 0,
+                    kx: 0,
+                    kz: 0,
+                    isDead: false,
+                    deathTime: 0,
+                    
+                    state: 'standing',
+                    stateTime: 0,
+                    chaseDuration: 15,
+                    attackAnimProgress: 0,
+                    isWandering: false,
+                    wanderTargetX: 0,
+                    wanderTargetZ: 0,
+                    isFleeing: false,
+                    nextWanderTime: Date.now() + (20000 + Math.random() * 40000)
                 });
             });
         }
@@ -15624,6 +16178,9 @@ export function initNeonBruiser(): Cleanup {
         function animateCrawlingTreeMesh(mesh, state, attackAnimProgress, delta, now) {
             const { legFL, legFR, legBL, legBR, trunk, leaves } = mesh.userData;
             if (!legFL) return;
+            
+            const isMushroom = mesh.userData.type === 'mimic_mushroom';
+            const defaultTrunkY = isMushroom ? 1.25 : 1.75;
             
             if (state === 'standing') {
                 legFL.visible = false;
@@ -15659,13 +16216,13 @@ export function initNeonBruiser(): Cleanup {
                     const progress = t / shakeDuration;
                     const intensity = Math.sin(progress * Math.PI); // Fade in and out shake intensity
                     
-                    // Shiver/tilt the entire tree mesh (amplified to be clearly visible)
+                    // Shiver/tilt the entire tree mesh
                     mesh.rotation.z = Math.sin(now * 0.06) * 0.045 * intensity;
                     mesh.rotation.x = Math.cos(now * 0.055) * 0.045 * intensity;
-                    trunk.position.y = 1.75;
+                    trunk.position.y = defaultTrunkY;
                     trunk.rotation.set(0, 0, 0);
                     
-                    // Shake the leaves (rustle them dynamically)
+                    // Shake the leaves/cap (rustle them dynamically)
                     if (leaves) {
                         leaves.forEach((leaf, idx) => {
                             const phase = idx * 1.5;
@@ -15678,7 +16235,7 @@ export function initNeonBruiser(): Cleanup {
                 } else {
                     mesh.rotation.x = 0;
                     mesh.rotation.z = 0;
-                    trunk.position.y = 1.75;
+                    trunk.position.y = defaultTrunkY;
                     trunk.rotation.set(0, 0, 0);
                     
                     if (leaves) {
@@ -15725,7 +16282,7 @@ export function initNeonBruiser(): Cleanup {
                         leaf.position.z = Math.cos(now * 0.08 + phase) * 0.03;
                     });
                 }
-            } else if (state === 'chasing') {
+            } else if (state === 'chasing' || state === 'wandering') {
                 legFL.visible = true;
                 legFR.visible = true;
                 legBL.visible = true;
@@ -15742,7 +16299,8 @@ export function initNeonBruiser(): Cleanup {
                 legBR.position.y = 0.4;
 
                 // Crawling leg animation: alternate rotation
-                const angle = Math.sin(now * 0.015) * 0.5;
+                const speedMult = (state === 'chasing') ? 0.015 : 0.01;
+                const angle = Math.sin(now * speedMult) * 0.5;
                 legFL.rotation.x = 0.2 + angle;
                 legBR.rotation.x = -0.2 + angle;
                 legFR.rotation.x = 0.2 - angle;
@@ -15753,16 +16311,16 @@ export function initNeonBruiser(): Cleanup {
                 legBL.rotation.z = -0.2;
                 legBR.rotation.z = 0.2;
                 
-                trunk.position.y = 1.75 + Math.abs(Math.sin(now * 0.015)) * 0.15;
+                trunk.position.y = defaultTrunkY + Math.abs(Math.sin(now * speedMult)) * 0.15;
                 mesh.rotation.x = 0;
                 mesh.rotation.z = 0;
 
                 if (leaves) {
                     leaves.forEach((leaf, idx) => {
                         const phase = idx * 1.0;
-                        leaf.rotation.z = Math.sin(now * 0.015 + phase) * 0.05;
-                        leaf.rotation.x = Math.cos(now * 0.015 + phase) * 0.03 - 0.05; // slightly lean back from velocity
-                        leaf.position.x = Math.sin(now * 0.015 + phase) * 0.02;
+                        leaf.rotation.z = Math.sin(now * speedMult + phase) * 0.05;
+                        leaf.rotation.x = Math.cos(now * speedMult + phase) * 0.03 - 0.05; // slightly lean back from velocity
+                        leaf.position.x = Math.sin(now * speedMult + phase) * 0.02;
                         leaf.position.z = 0;
                     });
                 }
@@ -15854,14 +16412,84 @@ export function initNeonBruiser(): Cleanup {
             }
         }
 
-        function updateCrawlingTree(z, delta, now) {
+        function makeMimicMushroomFlee(z, attackerX, attackerZ, kx, kz) {
+            if (z.type !== 'mimic_mushroom') return;
+            
+            z.isFleeing = true;
+            z.isWandering = true;
+            
+            if (z.state === 'standing' || z.state === 'burrowing') {
+                z.state = 'rising';
+                z.stateTime = 0;
+                spawnDirtParticles(z.mesh.position, 12);
+                AudioSynth.playClack(z.mesh.position);
+            } else {
+                z.state = 'wandering';
+            }
+            
+            let fleeDirX = 0;
+            let fleeDirZ = 0;
+            
+            if (kx !== undefined && kz !== undefined && (kx !== 0 || kz !== 0)) {
+                const len = Math.sqrt(kx * kx + kz * kz);
+                fleeDirX = kx / len;
+                fleeDirZ = kz / len;
+            } else if (attackerX !== undefined && attackerZ !== undefined) {
+                const dx = z.mesh.position.x - attackerX;
+                const dz = z.mesh.position.z - attackerZ;
+                const len = Math.sqrt(dx * dx + dz * dz);
+                if (len > 0) {
+                    fleeDirX = dx / len;
+                    fleeDirZ = dz / len;
+                }
+            }
+            
+            if (fleeDirX === 0 && fleeDirZ === 0) {
+                const angle = Math.random() * Math.PI * 2;
+                fleeDirX = Math.cos(angle);
+                fleeDirZ = Math.sin(angle);
+            }
+            
+            let foundFleeTarget = false;
+            for (let d = 30.0; d >= 10.0; d -= 5.0) {
+                const tx = z.mesh.position.x + fleeDirX * d;
+                const tz = z.mesh.position.z + fleeDirZ * d;
+                if (getTerrainHeight(tx, tz, false) > WATER_Y) {
+                    z.wanderTargetX = tx;
+                    z.wanderTargetZ = tz;
+                    foundFleeTarget = true;
+                    break;
+                }
+            }
+            if (!foundFleeTarget) {
+                for (let angleOffset = 0.4; angleOffset <= 2.0; angleOffset += 0.4) {
+                    for (let sign of [-1, 1]) {
+                        const angle = Math.atan2(fleeDirZ, fleeDirX) + sign * angleOffset;
+                        const tx = z.mesh.position.x + Math.cos(angle) * 20.0;
+                        const tz = z.mesh.position.z + Math.sin(angle) * 20.0;
+                        if (getTerrainHeight(tx, tz, false) > WATER_Y) {
+                            z.wanderTargetX = tx;
+                            z.wanderTargetZ = tz;
+                            foundFleeTarget = true;
+                            break;
+                        }
+                    }
+                    if (foundFleeTarget) break;
+                }
+            }
+            if (!foundFleeTarget) {
+                z.wanderTargetX = z.mesh.position.x + (Math.random() - 0.5) * 10;
+                z.wanderTargetZ = z.mesh.position.z + (Math.random() - 0.5) * 10;
+            }
+        }
+
+        function updateMimic(z, delta, now) {
             z.mesh.visible = (isDimensionCave(z.inCave) === isDimensionCave(playerInCave));
             
-            // Apply knockback velocities (reset immediately to prevent floating/sliding)
+            // Apply knockback velocities
             z.kx = 0;
             z.kz = 0;
 
-            // Target Selection (nearest of Host, Opponent)
             const px = camera.position.x;
             const pz = camera.position.z;
             
@@ -15887,21 +16515,62 @@ export function initNeonBruiser(): Cleanup {
                 }
             }
             
-            // State Machine Update
             z.stateTime += delta;
             
             if (z.state === 'standing') {
-                if (minDist < 8.0) {
+                if (z.type === 'crawling_tree' && minDist < 8.0) {
                     z.state = 'rising';
                     z.stateTime = 0;
+                    z.isWandering = false;
+                    z.isFleeing = false;
+                    spawnDirtParticles(z.mesh.position, 12);
+                    AudioSynth.playClack(z.mesh.position);
+                } else if (now >= z.nextWanderTime) {
+                    // Periodic wander check: rise and settle somewhere else
+                    z.state = 'rising';
+                    z.stateTime = 0;
+                    z.isWandering = true;
+                    z.isFleeing = false;
+                    
+                    // Choose destination within a radius of 25 from starting point
+                    if (z.type === 'mimic_mushroom' || z.type === 'crawling_tree') {
+                        let foundWanderTarget = false;
+                        for (let attempts = 0; attempts < 15; attempts++) {
+                            const angle = Math.random() * Math.PI * 2;
+                            const r = 10 + Math.random() * 20;
+                            const tx = z.startX + Math.cos(angle) * r;
+                            const tz = z.startZ + Math.sin(angle) * r;
+                            const ty = getTerrainHeight(tx, tz, false);
+                            if (ty > WATER_Y) {
+                                z.wanderTargetX = tx;
+                                z.wanderTargetZ = tz;
+                                foundWanderTarget = true;
+                                break;
+                            }
+                        }
+                        if (!foundWanderTarget) {
+                            z.wanderTargetX = z.startX;
+                            z.wanderTargetZ = z.startZ;
+                        }
+                    } else {
+                        const angle = Math.random() * Math.PI * 2;
+                        const r = 10 + Math.random() * 20;
+                        z.wanderTargetX = z.startX + Math.cos(angle) * r;
+                        z.wanderTargetZ = z.startZ + Math.sin(angle) * r;
+                    }
+                    
                     spawnDirtParticles(z.mesh.position, 12);
                     AudioSynth.playClack(z.mesh.position);
                 }
             } else if (z.state === 'rising') {
                 if (z.stateTime >= 1.0) {
-                    z.state = 'chasing';
+                    if (z.isWandering) {
+                        z.state = 'wandering';
+                    } else {
+                        z.state = 'chasing';
+                        z.chaseDuration = 10.0 + Math.random() * 10.0;
+                    }
                     z.stateTime = 0;
-                    z.chaseDuration = 10.0 + Math.random() * 10.0;
                 }
             } else if (z.state === 'chasing') {
                 const dx = targetX - z.mesh.position.x;
@@ -15913,22 +16582,32 @@ export function initNeonBruiser(): Cleanup {
                     const vx = (dx / dist) * speed;
                     const vz = (dz / dist) * speed;
                     
-                    z.mesh.position.x += vx * delta;
-                    z.mesh.position.z += vz * delta;
-                    z.mesh.position.y = getTerrainHeight(z.mesh.position.x, z.mesh.position.z, false);
+                    const nextX = z.mesh.position.x + vx * delta;
+                    const nextZ = z.mesh.position.z + vz * delta;
+                    const nextY = getTerrainHeight(nextX, nextZ, false);
                     
-                    z.ry = Math.atan2(dx, dz);
-                    z.mesh.rotation.y = z.ry;
+                    if ((z.type === 'crawling_tree' || z.type === 'mimic_mushroom') && nextY <= WATER_Y) {
+                        // Stop chasing and burrow if they hit water
+                        z.state = 'burrowing';
+                        z.stateTime = 0;
+                        spawnDirtParticles(z.mesh.position, 8);
+                    } else {
+                        z.mesh.position.x = nextX;
+                        z.mesh.position.z = nextZ;
+                        z.mesh.position.y = nextY;
+                        
+                        z.ry = Math.atan2(dx, dz);
+                        z.mesh.rotation.y = z.ry;
+                    }
                 }
                 
-                // Attack range check (2.5 meters)
-                if (dist < 2.5 && now - z.lastAttackTime > 1500 && minDist !== Infinity) {
+                // Attack range check (2.5 meters) - tree mimics only
+                if (z.type === 'crawling_tree' && dist < 2.5 && now - z.lastAttackTime > 1500 && minDist !== Infinity) {
                     z.state = 'attacking';
                     z.stateTime = 0;
                     z.attackAnimProgress = 0;
                     z.lastAttackTime = now;
                     
-                    // Deal damage and knockback
                     const kx = (targetX - z.mesh.position.x);
                     const kz = (targetZ - z.mesh.position.z);
                     const kLen = Math.sqrt(kx * kx + kz * kz);
@@ -15954,6 +16633,100 @@ export function initNeonBruiser(): Cleanup {
                     z.stateTime = 0;
                     spawnDirtParticles(z.mesh.position, 8);
                 }
+            } else if (z.state === 'wandering') {
+                // Moving towards wandering destination or fleeing
+                let tx = z.wanderTargetX;
+                let tz = z.wanderTargetZ;
+                let speed = z.isFleeing ? 4.5 : 2.0;
+                
+                const dx = tx - z.mesh.position.x;
+                const dz = tz - z.mesh.position.z;
+                const dist = Math.sqrt(dx * dx + dz * dz);
+                
+                // Player detection (range 20 coordinates)
+                if (minDist < 20.0) {
+                    if (z.type === 'crawling_tree') {
+                        // Aggressive: attack/chase
+                        z.state = 'chasing';
+                        z.isWandering = false;
+                        z.isFleeing = false;
+                        z.stateTime = 0;
+                        z.chaseDuration = 15.0;
+                    } else if (z.type === 'mimic_mushroom' && !z.isFleeing) {
+                        // Passive: flee away in opposite direction
+                        z.isFleeing = true;
+                        
+                        const fleeDx = z.mesh.position.x - targetX;
+                        const fleeDz = z.mesh.position.z - targetZ;
+                        const fleeLen = Math.sqrt(fleeDx * fleeDx + fleeDz * fleeDz);
+                        
+                        const fleeDirX = fleeLen > 0 ? fleeDx / fleeLen : 1;
+                        const fleeDirZ = fleeLen > 0 ? fleeDz / fleeLen : 0;
+                        
+                        // Set new destination 25 units away opposite from player, ensuring it's on land
+                        let foundFleeTarget = false;
+                        for (let d = 25.0; d >= 5.0; d -= 5.0) {
+                            const tx = z.mesh.position.x + fleeDirX * d;
+                            const tz = z.mesh.position.z + fleeDirZ * d;
+                            if (getTerrainHeight(tx, tz, false) > WATER_Y) {
+                                z.wanderTargetX = tx;
+                                z.wanderTargetZ = tz;
+                                foundFleeTarget = true;
+                                break;
+                            }
+                        }
+                        if (!foundFleeTarget) {
+                            // If straight back is water, try adjusting the angle
+                            for (let angleOffset = 0.4; angleOffset <= 2.0; angleOffset += 0.4) {
+                                for (let sign of [-1, 1]) {
+                                    const angle = Math.atan2(fleeDirZ, fleeDirX) + sign * angleOffset;
+                                    const tx = z.mesh.position.x + Math.cos(angle) * 20.0;
+                                    const tz = z.mesh.position.z + Math.sin(angle) * 20.0;
+                                    if (getTerrainHeight(tx, tz, false) > WATER_Y) {
+                                        z.wanderTargetX = tx;
+                                        z.wanderTargetZ = tz;
+                                        foundFleeTarget = true;
+                                        break;
+                                    }
+                                }
+                                if (foundFleeTarget) break;
+                            }
+                        }
+                        if (!foundFleeTarget) {
+                            // Failsafe: stay put
+                            z.wanderTargetX = z.mesh.position.x;
+                            z.wanderTargetZ = z.mesh.position.z;
+                        }
+                    }
+                }
+                
+                if (dist > 0.3) {
+                    const vx = (dx / dist) * speed;
+                    const vz = (dz / dist) * speed;
+                    
+                    const nextX = z.mesh.position.x + vx * delta;
+                    const nextZ = z.mesh.position.z + vz * delta;
+                    const nextY = getTerrainHeight(nextX, nextZ, false);
+                    
+                    if ((z.type === 'mimic_mushroom' || z.type === 'crawling_tree') && nextY <= WATER_Y) {
+                        // Stop moving in this direction if it leads into water!
+                        z.state = 'burrowing';
+                        z.stateTime = 0;
+                        spawnDirtParticles(z.mesh.position, 8);
+                    } else {
+                        z.mesh.position.x = nextX;
+                        z.mesh.position.z = nextZ;
+                        z.mesh.position.y = nextY;
+                        
+                        z.ry = Math.atan2(dx, dz);
+                        z.mesh.rotation.y = z.ry;
+                    }
+                } else {
+                    // Settle down
+                    z.state = 'burrowing';
+                    z.stateTime = 0;
+                    spawnDirtParticles(z.mesh.position, 8);
+                }
             } else if (z.state === 'attacking') {
                 z.attackAnimProgress += delta * 2.5;
                 if (z.attackAnimProgress >= 1.0) {
@@ -15972,6 +16745,9 @@ export function initNeonBruiser(): Cleanup {
                     z.ry = 0;
                     z.state = 'standing';
                     z.stateTime = 0;
+                    z.isWandering = false;
+                    z.isFleeing = false;
+                    z.nextWanderTime = now + (25000 + Math.random() * 45000); // 25s to 70s intervals
                     spawnDirtParticles(z.mesh.position, 10);
                 }
             }
@@ -16436,14 +17212,14 @@ export function initNeonBruiser(): Cleanup {
 
         function clearZombies(forceAll = false) {
             for (let i = zombies.length - 1; i >= 0; i--) {
-                if (forceAll || zombies[i].type !== 'crawling_tree') {
+                if (forceAll || (zombies[i].type !== 'crawling_tree' && zombies[i].type !== 'mimic_mushroom')) {
                     scene.remove(zombies[i].mesh);
                     zombies.splice(i, 1);
                 }
             }
             
             clientZombies.forEach((mesh, id) => {
-                if (forceAll || mesh.zombieType !== 'crawling_tree') {
+                if (forceAll || (mesh.zombieType !== 'crawling_tree' && mesh.zombieType !== 'mimic_mushroom')) {
                     scene.remove(mesh);
                 }
             });
@@ -16451,7 +17227,7 @@ export function initNeonBruiser(): Cleanup {
                 clientZombies.clear();
             } else {
                 for (let [id, mesh] of clientZombies) {
-                    if (mesh.zombieType !== 'crawling_tree') {
+                    if (mesh.zombieType !== 'crawling_tree' && mesh.zombieType !== 'mimic_mushroom') {
                         clientZombies.delete(id);
                     }
                 }
@@ -16470,8 +17246,8 @@ export function initNeonBruiser(): Cleanup {
             for (let i = zombies.length - 1; i >= 0; i--) {
                 const z = zombies[i];
                 
-                if (z.type === 'crawling_tree') {
-                    updateCrawlingTree(z, delta, now);
+                if (z.type === 'crawling_tree' || z.type === 'mimic_mushroom') {
+                    updateMimic(z, delta, now);
                     continue;
                 }
                 
@@ -16861,6 +17637,7 @@ export function initNeonBruiser(): Cleanup {
                     isDead: z.isDead || false,
                     deathTime: z.deathTime || 0,
                     type: z.type || 'zombie',
+                    mushroomColor: z.mushroomColor || 0xd93838,
                     isHissing: z.isHissing || false,
                     inCave: z.inCave || false,
                     crawlingTreeState: z.state || 'standing',
@@ -20311,6 +21088,59 @@ export function initNeonBruiser(): Cleanup {
     window.addEventListener('pagehide', handleUnload);
     window.addEventListener('beforeunload', handleUnload);
 
+    // Expose internal state and actions for testing
+    if (typeof window !== 'undefined') {
+        (window as any).__gameTestAPI = {
+            // Getters/setters for internal state
+            get myHealth() { return myHealth; },
+            set myHealth(v) { myHealth = v; },
+            get hunger() { return hunger; },
+            set hunger(v) { hunger = v; },
+            get currentGameMode() { return currentGameMode; },
+            set currentGameMode(v) { currentGameMode = v; },
+            get cheatsEnabled() { return cheatsEnabled; },
+            set cheatsEnabled(v) { cheatsEnabled = v; },
+            get physicsMode() { return physicsMode; },
+            set physicsMode(v) { physicsMode = v; },
+            get currentWorldName() { return currentWorldName; },
+            set currentWorldName(v) { currentWorldName = v; },
+            get inventoryItems() { return inventoryItems; },
+            get inventoryCounts() { return inventoryCounts; },
+            get hotbarItems() { return hotbarItems; },
+            get hotbarCounts() { return hotbarCounts; },
+            get gameActive() { return gameActive; },
+            set gameActive(v) { gameActive = v; },
+            get isLocked() { return isLocked; },
+            set isLocked(v) { isLocked = v; },
+            get zombies() { return zombies; },
+            get placedObjects() { return placedObjects; },
+            get respawnPoint() { return respawnPoint; },
+            set respawnPoint(v) { respawnPoint = v; },
+            get playerInCave() { return playerInCave; },
+            set playerInCave(v) { playerInCave = v; },
+            get isGrounded() { return isGrounded; },
+            set isGrounded(v) { isGrounded = v; },
+            get camera() { return camera; },
+
+            // Internal functions
+            takeDamage,
+            respawnPlayer,
+            startNewWorld,
+            autoSaveAndExit,
+            sendChatMessage,
+            countItem,
+            addFoodToInventory,
+            isRecipeUnlocked,
+            RECIPES,
+            getTerrainHeight,
+            getNoiseTerrainHeight,
+            getSavedWorlds,
+            saveWorldsList,
+            triggerNightCommand,
+            triggerDayCommand,
+        };
+    }
+
     renderSavesList();
     initPeer();
 
@@ -20337,5 +21167,6 @@ export function initNeonBruiser(): Cleanup {
         delete window.onChestInventoryClick;
         delete window.onChestSlotClick;
         delete window.closeChestUI;
+        delete (window as any).__gameTestAPI;
     };
 }
