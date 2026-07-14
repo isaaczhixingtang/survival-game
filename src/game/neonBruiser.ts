@@ -1222,25 +1222,42 @@ export function initNeonBruiser(): Cleanup {
             if (!PeerClass) {
                 try {
                     const peerModule = await import('peerjs');
-                    PeerClass = peerModule.Peer || peerModule.default || peerModule;
+                    let resolvedPeer = null;
+                    if (peerModule) {
+                        if (typeof peerModule.Peer === 'function') {
+                            resolvedPeer = peerModule.Peer;
+                        } else if (peerModule.default) {
+                            if (typeof peerModule.default === 'function') {
+                                resolvedPeer = peerModule.default;
+                            } else if (typeof peerModule.default.Peer === 'function') {
+                                resolvedPeer = peerModule.default.Peer;
+                            } else if (typeof peerModule.default.default === 'function') {
+                                resolvedPeer = peerModule.default.default;
+                            }
+                        }
+                        if (!resolvedPeer && typeof peerModule === 'function') {
+                            resolvedPeer = peerModule;
+                        }
+                    }
+                    PeerClass = resolvedPeer;
                 } catch (err) {
-                    console.error("Failed to dynamically import PeerJS:", err);
+                    console.warn("Failed to dynamically import PeerJS:", err);
                     if (elStatus) elStatus.innerText = "Multiplayer error: PeerJS failed to load.";
                     return;
                 }
             }
 
             if (!PeerClass || typeof PeerClass !== 'function') {
-                console.error("PeerJS constructor not found! P2P multiplayer will be disabled.", PeerClass);
+                console.warn("PeerJS constructor not found! P2P multiplayer will be disabled.", PeerClass);
                 if (elStatus) elStatus.innerText = "Multiplayer error: PeerJS failed to load.";
                 return;
             }
 
             const shortId = forcedId || generateShortId();
             try {
-                peer = new PeerClass(shortId, { debug: 2 });
+                peer = new PeerClass(shortId, { debug: 0 });
             } catch (err) {
-                console.error("Failed to initialize PeerJS:", err);
+                console.warn("Failed to initialize PeerJS:", err);
                 if (elStatus) elStatus.innerText = "Failed to initialize PeerJS.";
                 return;
             }
@@ -1276,8 +1293,15 @@ export function initNeonBruiser(): Cleanup {
                 setupConnection();
             });
 
+            peer.on('disconnected', () => {
+                console.warn("Peer disconnected from signaling server. Reconnecting...");
+                if (peer && !peer.destroyed) {
+                    peer.reconnect();
+                }
+            });
+
             peer.on('error', (err) => {
-                console.error("PeerJS Error:", err);
+                console.warn("PeerJS Error:", err);
                 if (err.type === 'unavailable-id') {
                     if (attempt < 2) {
                         console.log(`ID ${shortId} is unavailable. Retrying attempt ${attempt + 1} in 1.5s...`);
@@ -1437,7 +1461,7 @@ export function initNeonBruiser(): Cleanup {
             });
 
             conn.on('error', (err) => {
-                console.error("Connection Error:", err);
+                console.warn("Connection Error:", err);
                 if (elStatus) elStatus.innerText = "Connection failed: " + err.message;
                 handleDisconnect();
             });
@@ -1589,6 +1613,7 @@ export function initNeonBruiser(): Cleanup {
         };
         const placedObjects = [];
         let respawnPoint = null; // { x, y, z, inCave }
+        let strongholdBaseY = 0;
         let activeFurnace = null;
         let furnaceUIOpen = false;
         let activeChest = null;
@@ -1666,6 +1691,7 @@ export function initNeonBruiser(): Cleanup {
         let minedDesertHoles = new Set();
         let highestYSinceGrounded = 0;
         let ridingBoat = false;
+        let activeBoat = null;
         let ridingHorse = false;
         let activeHorse = null;
 
@@ -2068,6 +2094,14 @@ export function initNeonBruiser(): Cleanup {
                 const h9 = 2.5 + Math.sin(x * 0.05) * Math.cos(z * 0.05) * 2.0;
                 landH = Math.max(landH, -6.0 * (1 - w) + h9 * w);
             }
+
+            // 10. Stronghold Island (behind Mushroom Island) (center (520, 930), radius 80)
+            const d_stronghold = Math.sqrt(Math.pow(x - 520, 2) + Math.pow(z - 930, 2));
+            if (d_stronghold < 80) {
+                const w = Math.min(1.0, (80 - d_stronghold) / 20);
+                const h_stronghold = 3.0 + Math.sin(x * 0.04) * Math.cos(z * 0.04) * 0.5;
+                landH = Math.max(landH, -6.0 * (1 - w) + h_stronghold * w);
+            }
             
             h = landH;
             
@@ -2075,10 +2109,11 @@ export function initNeonBruiser(): Cleanup {
             if (r > 550) {
                 const noiseH = getNoiseTerrainHeight(x, z);
                 
-                // Exempt Pine Island 2 and Mushroom Island from noise overwrite
+                // Exempt Pine Island 2, Mushroom Island, and Stronghold Island from noise overwrite
                 let islandW = 0;
                 if (d8 < 120) islandW = Math.min(1.0, (120 - d8) / 30);
                 if (d9 < 120) islandW = Math.max(islandW, Math.min(1.0, (120 - d9) / 30));
+                if (d_stronghold < 80) islandW = Math.max(islandW, Math.min(1.0, (80 - d_stronghold) / 20));
                 
                 if (islandW > 0) {
                     h = h * islandW + noiseH * (1.0 - islandW);
@@ -2159,6 +2194,7 @@ export function initNeonBruiser(): Cleanup {
             const d_reef = Math.sqrt(Math.pow(x - 0, 2) + Math.pow(z + 480, 2));
             const d_pine2 = Math.sqrt(Math.pow(x - 350, 2) + Math.pow(z - 650, 2));
             const d_mushroom = Math.sqrt(Math.pow(x - 520, 2) + Math.pow(z - 650, 2));
+            const d_stronghold = Math.sqrt(Math.pow(x - 520, 2) + Math.pow(z - 930, 2));
             
             const d_main = Math.sqrt(x * x + z * z);
             
@@ -2272,6 +2308,12 @@ export function initNeonBruiser(): Cleanup {
                 g_col = g_col * (1 - w) + 0.28 * w;
                 b_col = b_col * (1 - w) + 0.38 * w;
                 skipOceanBlend = true;
+            } else if (d_stronghold < 80) {
+                const w = Math.min(1.0, (80 - d_stronghold) / 20);
+                r_col = r_col * (1 - w) + forestR * w;
+                g_col = g_col * (1 - w) + forestG * w;
+                b_col = b_col * (1 - w) + forestB * w;
+                skipOceanBlend = true;
             }
             
             if (y < -0.5 && !skipOceanBlend) {
@@ -2381,25 +2423,18 @@ export function initNeonBruiser(): Cleanup {
                 } else {
                     isLocked = false;
                     elCrosshair.style.display = 'none';
+                    moveForces.forward = false;
+                    moveForces.backward = false;
+                    moveForces.left = false;
+                    moveForces.right = false;
+                    moveForces.jump = false;
                     if (gameActive && myHealth > 0 && oppHealth > 0) {
                         const isIngameSettingsOpen = ingameSettings && ingameSettings.style.display === 'flex';
                         const isPauseMenuOpen = pauseMenu && pauseMenu.style.display === 'flex';
                         if (chatOpen || mapOpen || inventoryOpen || furnaceUIOpen || chestUIOpen || isIngameSettingsOpen || isPauseMenuOpen) {
                             if (prompt) prompt.style.display = 'none';
                         } else {
-                            // Only open the pause menu if the document has focus and is not hidden.
-                            // If pointer lock is lost because of tab switch or focus loss, let the blur/visibility change handlers save and exit instead of opening the pause menu.
-                            const isFocusLost = !document.hasFocus() || document.visibilityState === 'hidden';
-                            if (!isFocusLost) {
-                                if (pauseMenu) pauseMenu.style.display = 'flex';
-                                if (prompt) prompt.style.display = 'none';
-                                
-                                // Set flag to prevent onKeyUp from immediately closing the pause menu
-                                justExitedPointerLock = true;
-                                setTimeout(() => {
-                                    justExitedPointerLock = false;
-                                }, 100);
-                            }
+                            if (prompt) prompt.style.display = 'block';
                         }
                     }
                 }
@@ -3534,6 +3569,215 @@ export function initNeonBruiser(): Cleanup {
                 spawnBigMushroom(tx, tz);
             }
         }
+
+        function createBrickTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128;
+            canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+            
+            ctx.fillStyle = '#8c3d3a';
+            ctx.fillRect(0, 0, 128, 128);
+            
+            ctx.strokeStyle = '#5a2522';
+            ctx.lineWidth = 2;
+            
+            for (let y = 0; y <= 128; y += 16) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(128, y);
+                ctx.stroke();
+            }
+            
+            for (let row = 0; row < 8; row++) {
+                const y = row * 16;
+                const offset = (row % 2) * 32;
+                for (let x = offset; x <= 128 + 32; x += 64) {
+                    ctx.beginPath();
+                    ctx.moveTo(x % 128, y);
+                    ctx.lineTo(x % 128, y + 16);
+                    ctx.stroke();
+                }
+            }
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+            texture.repeat.set(4, 4);
+            return texture;
+        }
+
+        function createStoneFloorTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128;
+            canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+            
+            ctx.fillStyle = '#444444';
+            ctx.fillRect(0, 0, 128, 128);
+            
+            ctx.strokeStyle = '#2d2d2d';
+            ctx.lineWidth = 1;
+            for (let i = 0; i < 6; i++) {
+                ctx.beginPath();
+                ctx.moveTo(Math.random() * 128, Math.random() * 128);
+                ctx.lineTo(Math.random() * 128, Math.random() * 128);
+                ctx.stroke();
+            }
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+            texture.repeat.set(4, 4);
+            return texture;
+        }
+
+        function spawnStrongholdIslandResources() {
+            // Stronghold Island center is (520, 930), radius 80
+            for (let i = 0; i < 30; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = Math.random() * 65;
+                const tx = 520 + Math.cos(angle) * dist;
+                const tz = 930 + Math.sin(angle) * dist;
+                
+                // Exclude the center area where the stronghold is built (16x16 size)
+                if (Math.abs(tx - 520) < 15 && Math.abs(tz - 930) < 15) {
+                    continue;
+                }
+                
+                const coordKey = `${tx.toFixed(1)},${tz.toFixed(1)}`;
+                if (choppedTreeCoords.has(coordKey)) {
+                    continue;
+                }
+                
+                const ty = getTerrainHeight(tx, tz);
+                if (ty <= WATER_Y) { i--; continue; }
+                
+                spawnSinglePineTree(tx, tz);
+            }
+        }
+
+        function spawnStronghold() {
+            const baseY = getTerrainHeight(520, 930, false);
+            strongholdBaseY = baseY; // save to top-level state
+            
+            const brickTex = createBrickTexture();
+            const floorTex = createStoneFloorTexture();
+            
+            const brickMat = new THREE.MeshStandardMaterial({ map: brickTex, roughness: 0.8 });
+            const floorMat = new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.9 });
+            const woodMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
+            
+            const strongholdGroup = new THREE.Group();
+            strongholdGroup.name = "stronghold";
+            
+            // Helper to create walls
+            function addWall(w, h, d, x, y, z) {
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), brickMat);
+                mesh.position.set(x, y, z);
+                mesh.castShadow = true;
+                mesh.receiveShadow = true;
+                strongholdGroup.add(mesh);
+            }
+            
+            // Helper to create floors
+            function addFloor(w, h, d, x, y, z) {
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), floorMat);
+                mesh.position.set(x, y, z);
+                mesh.castShadow = true;
+                mesh.receiveShadow = true;
+                strongholdGroup.add(mesh);
+            }
+            
+            // Helper to create ladders
+            function addLadder(x, z, startY, endY) {
+                const height = endY - startY;
+                const ladderGroup = new THREE.Group();
+                ladderGroup.position.set(x, startY + height / 2, z);
+                
+                let isZAligned = true;
+                if (Math.abs(z - 923.4) < 0.5) {
+                    isZAligned = false; // X aligned
+                }
+                
+                const leftRail = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, height, 8), woodMat);
+                const rightRail = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, height, 8), woodMat);
+                
+                if (isZAligned) {
+                    leftRail.position.set(0, 0, -0.3);
+                    rightRail.position.set(0, 0, 0.3);
+                } else {
+                    leftRail.position.set(-0.3, 0, 0);
+                    rightRail.position.set(0.3, 0, 0);
+                }
+                
+                ladderGroup.add(leftRail);
+                ladderGroup.add(rightRail);
+                
+                const numRungs = Math.floor(height / 0.25);
+                for (let r = 0; r < numRungs; r++) {
+                    const rung = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.6, 8), woodMat);
+                    if (isZAligned) {
+                        rung.rotation.x = Math.PI / 2;
+                        rung.position.set(0, -height / 2 + 0.125 + r * 0.25, 0);
+                    } else {
+                        rung.rotation.z = Math.PI / 2;
+                        rung.position.set(0, -height / 2 + 0.125 + r * 0.25, 0);
+                    }
+                    ladderGroup.add(rung);
+                }
+                strongholdGroup.add(ladderGroup);
+            }
+            
+            // North Wall (y from baseY to baseY + 12, height 12)
+            addWall(16, 12, 1, 520, baseY + 6, 922.5);
+            // East Wall (y from baseY to baseY + 12, height 12)
+            addWall(1, 12, 16, 527.5, baseY + 6, 930);
+            // West Wall (y from baseY to baseY + 12, height 12)
+            addWall(1, 12, 16, 512.5, baseY + 6, 930);
+            
+            // South Wall (entrance/doorway on Level 1)
+            addWall(6, 4, 1, 515, baseY + 2, 937.5);
+            addWall(6, 4, 1, 525, baseY + 2, 937.5);
+            addWall(4, 1, 1, 520, baseY + 3.5, 937.5);
+            
+            // South Wall upper levels
+            addWall(16, 8, 1, 520, baseY + 8, 937.5);
+            
+            // Level 1 Floor
+            addFloor(16, 0.5, 16, 520, baseY - 0.25, 930);
+            
+            // Level 2 Floor (L1 Ceiling, baseY + 3.5 to baseY + 4.0)
+            // Hole: x from 525 to 527, z from 929 to 931
+            addFloor(13, 0.5, 16, 518.5, baseY + 3.75, 930);
+            addFloor(2, 0.5, 7, 526, baseY + 3.75, 925.5);
+            addFloor(2, 0.5, 7, 526, baseY + 3.75, 934.5);
+            
+            // Level 3 Floor (L2 Ceiling, baseY + 7.5 to baseY + 8.0)
+            // Hole: x from 513 to 515, z from 929 to 931
+            addFloor(13, 0.5, 16, 521.5, baseY + 7.75, 930);
+            addFloor(2, 0.5, 7, 514, baseY + 7.75, 925.5);
+            addFloor(2, 0.5, 7, 514, baseY + 7.75, 934.5);
+            
+            // Roof (L3 Ceiling, baseY + 11.5 to baseY + 12.0)
+            // Hole: x from 519 to 521, z from 923 to 925
+            addFloor(16, 0.5, 13, 520, baseY + 11.75, 931.5);
+            addFloor(7, 0.5, 3, 515.5, baseY + 11.75, 923.5);
+            addFloor(7, 0.5, 3, 524.5, baseY + 11.75, 923.5);
+            
+            // L1 Ladder: East Wall (x = 526.6, z = 930)
+            addLadder(526.6, 930, baseY, baseY + 4);
+            // L2 Ladder: West Wall (x = 513.4, z = 930)
+            addLadder(513.4, 930, baseY + 4, baseY + 8);
+            // L3 Ladder: North Wall (x = 520, z = 923.4)
+            addLadder(520, 923.4, baseY + 8, baseY + 12);
+            
+            scene.add(strongholdGroup);
+            
+            if (isHost) {
+                spawnStrongholdGuards();
+            }
+        }
         
         function resetWorldStones() {
             worldStones.forEach(stone => {
@@ -4150,6 +4394,10 @@ export function initNeonBruiser(): Cleanup {
             
             // Spawn Mushroom Island resources (center 520, 650)
             spawnMushroomIslandResources();
+            
+            // Spawn Stronghold Island resources and building (center 520, 930)
+            spawnStrongholdIslandResources();
+            spawnStronghold();
 
             // 11b. Spawn 50 more pine trees at the main spawn island (Plains: x > 20, d1 < 210)
             for (let i = 0; i < 50; i++) {
@@ -5565,6 +5813,14 @@ export function initNeonBruiser(): Cleanup {
                     moveForces.right = true;
                     break;
                 case 'Space':
+                    if (ridingBoat) {
+                        ridingBoat = false;
+                        camera.position.y += 1.0;
+                        activeBoat = null;
+                        addChatMessage("Exited the boat.", "system");
+                        moveForces.jump = false;
+                        break;
+                    }
                     moveForces.jump = true;
                     if (isGrounded && gameActive && myHealth > 0 && !mapOpen && !inventoryOpen) {
                         velocity.y = 6.2; // Jump impulse
@@ -5931,7 +6187,7 @@ export function initNeonBruiser(): Cleanup {
             if (text.length > 0) {
                 const parts = text.split(/\s+/);
                 const command = parts[0].toLowerCase();
-                if (command === '/night' || command === '/day' || command === '/tp' || command === '/weather') {
+                if (command === '/night' || command === '/day' || command === '/tp' || command === '/weather' || command === '/kill') {
                     if (!cheatsEnabled) {
                          addChatMessage("Cheats are disabled in this world!", "system");
                          elChatInput.value = '';
@@ -5977,7 +6233,8 @@ export function initNeonBruiser(): Cleanup {
                         secondpine: { x: 350, z: 650 },
                         secondpinecone: { x: 350, z: 650 },
                         mushroom: { x: 520, z: 650 },
-                        mushroomisland: { x: 520, z: 650 }
+                        mushroomisland: { x: 520, z: 650 },
+                        stronghold: { x: 508, z: 930 }
                     };
                     const coords = targetCoords[loc];
                     if (coords) {
@@ -6020,7 +6277,15 @@ export function initNeonBruiser(): Cleanup {
                         
                         addChatMessage("Teleported to " + loc + " (" + tx + ", " + tz + ").", "system");
                     } else {
-                        addChatMessage("Usage: /tp [dunes|forest|cherry|mountain|savanna|quantum|rocky|reef|pine2|mushroom]", "system");
+                        addChatMessage("Usage: /tp [dunes|forest|cherry|mountain|savanna|quantum|rocky|reef|pine2|mushroom|stronghold]", "system");
+                    }
+                } else if (command === '/kill') {
+                    const arg1 = parts[1] ? parts[1].toLowerCase() : '';
+                    const arg2 = parts[2] ? parts[2].toLowerCase() : '';
+                    if ((arg1 === '' && arg2 === '') || (arg1 === 'stronghold' && (arg2 === 'guard' || arg2 === 'guards'))) {
+                        triggerKillStrongholdGuardCommand();
+                    } else {
+                        addChatMessage("Usage: /kill or /kill stronghold guard", "system");
                     }
                 } else {
                     addChatMessage(text, 'local');
@@ -6052,6 +6317,113 @@ export function initNeonBruiser(): Cleanup {
             
             sendNetworkMessage({ type: 'time-sync', offset: timeOffset });
             addChatMessage("Time set to day via command.", "system");
+        }
+
+        function triggerKillStrongholdGuardCommand() {
+            if (isHost) {
+                killStrongholdGuardsAndSpawnMimics();
+            } else if (isConnected) {
+                sendNetworkMessage({ type: 'kill-stronghold-guards' });
+            }
+        }
+
+        function killStrongholdGuardsAndSpawnMimics() {
+            let killedCount = 0;
+            zombies.forEach(z => {
+                if (z.type === 'stronghold_guard' && !z.isDead) {
+                    z.health = 0;
+                    z.isDead = true;
+                    z.deathTime = 0;
+                    killedCount++;
+                }
+            });
+            addChatMessage("Stronghold Guards killed! Mimics spawned at the villages.", "system");
+            spawnHouseMimicsAtVillages();
+        }
+
+        function spawnHouseMimicAt(x, z) {
+            const y = getTerrainHeight(x, z, false);
+            const id = 'house_mimic_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+            const mesh = createHouseMimicMesh(x < -200);
+            mesh.position.set(x, y, z);
+            scene.add(mesh);
+            
+            zombies.push({
+                id: id,
+                mesh: mesh,
+                type: 'house_mimic',
+                x: x,
+                y: y,
+                z: z,
+                startX: x,
+                startY: y,
+                startZ: z,
+                ry: 0,
+                lastAttackTime: 0,
+                isAttacking: false,
+                attackAnimTime: 0,
+                health: 300,
+                maxHealth: 300,
+                burnTime: 0,
+                kx: 0,
+                kz: 0,
+                isDead: false,
+                deathTime: 0,
+                state: 'standing',
+                isHostile: false,
+                attackAnimProgress: 0,
+                inCave: false,
+                nextWanderTime: Date.now() + (15000 + Math.random() * 25000)
+            });
+        }
+
+        function spawnHouseMimicsAtVillages() {
+            // Village 1: main island village (around -80, -80)
+            for (let k = 0; k < 1; k++) {
+                let v1X = -80, v1Z = -80;
+                for (let i = 0; i < 20; i++) {
+                    const dx = (Math.random() - 0.5) * 30;
+                    const dz = (Math.random() - 0.5) * 30;
+                    const tx = -80 + dx;
+                    const tz = -80 + dz;
+                    if (getTerrainHeight(tx, tz, false) > WATER_Y + 0.5) {
+                        v1X = tx;
+                        v1Z = tz;
+                        break;
+                    }
+                }
+                spawnHouseMimicAt(v1X, v1Z);
+            }
+            
+            // Village 2: savanna island village (around -350, 250)
+            for (let k = 0; k < 1; k++) {
+                let v2X = -350, v2Z = 250;
+                for (let i = 0; i < 20; i++) {
+                    const dx = (Math.random() - 0.5) * 30;
+                    const dz = (Math.random() - 0.5) * 30;
+                    const tx = -350 + dx;
+                    const tz = 250 + dz;
+                    if (getTerrainHeight(tx, tz, false) > WATER_Y + 0.5) {
+                        v2X = tx;
+                        v2Z = tz;
+                        break;
+                    }
+                }
+                spawnHouseMimicAt(v2X, v2Z);
+            }
+        }
+
+        function triggerHouseMimicsAggro(vx, vz) {
+            zombies.forEach(z => {
+                if (z.type === 'house_mimic' && !z.isDead) {
+                    const dx = z.mesh.position.x - vx;
+                    const dz = z.mesh.position.z - vz;
+                    const dist = Math.sqrt(dx * dx + dz * dz);
+                    if (dist < 150) {
+                        z.isHostile = true;
+                    }
+                }
+            });
         }
 
         // Make addChatMessage globally available for network events
@@ -7027,6 +7399,9 @@ export function initNeonBruiser(): Cleanup {
                     for (let i = zombies.length - 1; i >= 0; i--) {
                         const z = zombies[i];
                         if (z.isDead) continue;
+                        if ((z.type === 'crawling_tree' || z.type === 'mimic_mushroom') && z.wakeUpTime && (Date.now() + timeOffset) < z.wakeUpTime) {
+                            continue;
+                        }
                         const zx = z.mesh.position.x;
                         const zz = z.mesh.position.z;
                         const distXZ = Math.sqrt((zx - myX) ** 2 + (zz - myZ) ** 2);
@@ -7044,7 +7419,17 @@ export function initNeonBruiser(): Cleanup {
                                     rotX: 0.25
                                 });
 
-                                z.health = Math.max(0, z.health - damage);
+                                 let finalDamage = damage;
+                                 if (z.type === 'stronghold_guard') {
+                                     const isAttackingState = z.isAttacking || z.state === 'jabbing' || z.state === 'charging' || z.state === 'slashing';
+                                     if (!isAttackingState) {
+                                         finalDamage = Math.round(damage * 0.5);
+                                     }
+                                 }
+                                 z.health = Math.max(0, z.health - finalDamage);
+                                 if (z.type === 'house_mimic') {
+                                     z.isHostile = true;
+                                 }
                                 if (z.type === 'crawling_tree' && z.state === 'standing') {
                                     z.state = 'rising';
                                     z.stateTime = 0;
@@ -7057,9 +7442,13 @@ export function initNeonBruiser(): Cleanup {
                                 z.kx = kDir.x;
                                 z.kz = kDir.y;
                                 if (z.health <= 0) {
-                                    z.isDead = true;
-                                    z.deathTime = 0;
-                                    handleZombieDeathDrops(z);
+                                    if (z.type === 'crawling_tree' || z.type === 'mimic_mushroom') {
+                                        handleMimicSettle(z);
+                                    } else {
+                                        z.isDead = true;
+                                        z.deathTime = 0;
+                                        handleZombieDeathDrops(z);
+                                    }
                                 }
                                 opponentHit = true;
                                 break; // hit one zombie per strike
@@ -7068,6 +7457,9 @@ export function initNeonBruiser(): Cleanup {
                     }
                 } else {
                     for (let [id, mesh] of clientZombies) {
+                        if ((mesh.zombieType === 'crawling_tree' || mesh.zombieType === 'mimic_mushroom') && mesh.crawlingTreeState === 'settled') {
+                            continue;
+                        }
                         const zx = mesh.position.x;
                         const zz = mesh.position.z;
                         const distXZ = Math.sqrt((zx - myX) ** 2 + (zz - myZ) ** 2);
@@ -7123,6 +7515,8 @@ export function initNeonBruiser(): Cleanup {
                                 v.isDead = true;
                                 v.deathTime = 0;
                             }
+                            
+                            triggerHouseMimicsAggro(vx, vz);
                             
                             sendNetworkMessage({
                                 type: 'damage-villager',
@@ -7492,6 +7886,9 @@ export function initNeonBruiser(): Cleanup {
             for (let i = 0; i < 9; i++) {
                 const type = hotbarItems[i];
                 if (type) {
+                    if (type === 'wooden_axe') {
+                        continue;
+                    }
                     const count = hotbarCounts[i];
                     const dur = hotbarDurability[i];
                     for (let c = 0; c < count; c++) {
@@ -7511,6 +7908,9 @@ export function initNeonBruiser(): Cleanup {
             for (let i = 0; i < 27; i++) {
                 const type = inventoryItems[i];
                 if (type) {
+                    if (type === 'wooden_axe') {
+                        continue;
+                    }
                     const count = inventoryCounts[i];
                     const dur = inventoryDurability[i];
                     for (let c = 0; c < count; c++) {
@@ -7543,17 +7943,19 @@ export function initNeonBruiser(): Cleanup {
             // Drop held item
             if (heldItem) {
                 const type = heldItem.type;
-                const count = heldItem.count;
-                const dur = heldItem.durability !== undefined ? heldItem.durability : null;
-                for (let c = 0; c < count; c++) {
-                    const dropPos = playerPos.clone().add(new THREE.Vector3(
-                        (Math.random() - 0.5) * 2.5,
-                        0.2,
-                        (Math.random() - 0.5) * 2.5
-                    ));
-                    spawnDroppedFood(type, dropPos, 1.0, dur);
+                if (type !== 'wooden_axe') {
+                    const count = heldItem.count;
+                    const dur = heldItem.durability !== undefined ? heldItem.durability : null;
+                    for (let c = 0; c < count; c++) {
+                        const dropPos = playerPos.clone().add(new THREE.Vector3(
+                            (Math.random() - 0.5) * 2.5,
+                            0.2,
+                            (Math.random() - 0.5) * 2.5
+                        ));
+                        spawnDroppedFood(type, dropPos, 1.0, dur);
+                    }
+                    heldItem = null;
                 }
-                heldItem = null;
             }
             // Cancel eating
             if (isEating) {
@@ -7702,6 +8104,7 @@ export function initNeonBruiser(): Cleanup {
             
             // Serialize placedObjects (omit THREE.Mesh references)
             const serializedObjects = placedObjects.map(obj => ({
+                id: obj.id || (obj.type + '_' + Date.now() + '_' + Math.floor(Math.random() * 1000)),
                 type: obj.type,
                 x: obj.pos.x,
                 y: obj.pos.y,
@@ -7916,7 +8319,7 @@ export function initNeonBruiser(): Cleanup {
              if (save.placedObjects) {
                  save.placedObjects.forEach(obj => {
                      const pos = new THREE.Vector3(obj.x, obj.y, obj.z);
-                     const spawned = spawnPlacedObject(obj.type, pos, false);
+                     const spawned = spawnPlacedObject(obj.type, pos, false, obj.id);
                      if (spawned) {
                          spawned.isOpen = !!obj.isOpen;
                          spawned.initialRotationY = typeof obj.initialRotationY === 'number' ? obj.initialRotationY : (spawned.mesh ? spawned.mesh.rotation.y : 0);
@@ -8441,6 +8844,8 @@ export function initNeonBruiser(): Cleanup {
                 spawnInitialAnimals();
                 spawnCrawlingTrees();
                 spawnMushroomMimics();
+                spawnStrongholdGuards();
+                spawnHouseMimicsAtVillages();
                 
                 if (isConnected) {
                     sendNetworkMessage({
@@ -8583,6 +8988,8 @@ export function initNeonBruiser(): Cleanup {
             if (isHost) {
                 spawnCrawlingTrees();
                 spawnMushroomMimics();
+                spawnStrongholdGuards();
+                spawnHouseMimicsAtVillages();
             }
         }
 
@@ -8634,7 +9041,7 @@ export function initNeonBruiser(): Cleanup {
                     if (msg.placedObjects) {
                         msg.placedObjects.forEach(obj => {
                             const pos = new THREE.Vector3(obj.x, obj.y, obj.z);
-                            const spawned = spawnPlacedObject(obj.type, pos, false);
+                            const spawned = spawnPlacedObject(obj.type, pos, false, obj.id);
                             if (spawned) {
                                 spawned.isOpen = !!obj.isOpen;
                                 spawned.initialRotationY = typeof obj.initialRotationY === 'number' ? obj.initialRotationY : (spawned.mesh ? spawned.mesh.rotation.y : 0);
@@ -8809,11 +9216,19 @@ export function initNeonBruiser(): Cleanup {
                     takeDamage(msg.damage, msg.knockbackX, msg.knockbackZ, "Killed by Opponent!");
                     break;
                 case 'place-block':
-                    spawnPlacedObject(msg.blockType, new THREE.Vector3(msg.x, msg.y, msg.z), false);
+                    spawnPlacedObject(msg.blockType, new THREE.Vector3(msg.x, msg.y, msg.z), false, msg.id);
                     const spawned = placedObjects[placedObjects.length - 1];
                     if (spawned) {
                         spawned.inCave = msg.inCave !== undefined ? isDimensionCave(msg.inCave) : isDimensionCave(opponentInCave);
                         spawned.mesh.visible = (isDimensionCave(spawned.inCave) === isDimensionCave(playerInCave));
+                    }
+                    break;
+                case 'sync-placed-object':
+                    const objToSync = placedObjects.find(o => o.id === msg.id);
+                    if (objToSync) {
+                        objToSync.pos.set(msg.x, msg.y, msg.z);
+                        objToSync.mesh.position.set(msg.x, msg.y, msg.z);
+                        objToSync.mesh.rotation.y = msg.ry;
                     }
                     break;
                 case 'break-block':
@@ -8925,7 +9340,12 @@ export function initNeonBruiser(): Cleanup {
                         activeIds.add(zd.id);
                         let mesh = clientZombies.get(zd.id);
                         if (!mesh) {
-                            mesh = zd.type === 'creeper' ? createCreeperMesh() : (zd.type === 'skeleton' ? createSkeletonMesh() : (zd.type === 'crawling_tree' ? createCrawlingTreeMesh() : (zd.type === 'mimic_mushroom' ? createMimicMushroomMesh(zd.mushroomColor || 0xd93838) : createZombieMesh())));
+                            mesh = zd.type === 'creeper' ? createCreeperMesh() : 
+                                   (zd.type === 'skeleton' ? createSkeletonMesh() : 
+                                   (zd.type === 'crawling_tree' ? createCrawlingTreeMesh() : 
+                                   (zd.type === 'mimic_mushroom' ? createMimicMushroomMesh(zd.mushroomColor || 0xd93838) : 
+                                   (zd.type === 'house_mimic' ? createHouseMimicMesh(zd.x < -200) : 
+                                   (zd.type === 'stronghold_guard' ? createStrongholdGuardMesh() : createZombieMesh())))));
                             mesh.zombieType = zd.type || 'zombie';
                             scene.add(mesh);
                             clientZombies.set(zd.id, mesh);
@@ -8940,6 +9360,15 @@ export function initNeonBruiser(): Cleanup {
                         if (mesh.zombieType === 'crawling_tree' || mesh.zombieType === 'mimic_mushroom') {
                             mesh.crawlingTreeState = zd.crawlingTreeState || 'standing';
                             mesh.attackAnimProgress = zd.attackAnimProgress || 0;
+                            return;
+                        }
+                        
+                        if (mesh.zombieType === 'stronghold_guard' || mesh.zombieType === 'house_mimic') {
+                            mesh.guardState = zd.isDead ? 'dead' : (zd.crawlingTreeState || 'standing');
+                            mesh.attackAnimProgress = zd.isDead ? Math.min(1.0, (zd.deathTime || 0) / 0.8) : (zd.attackAnimProgress || 0);
+                            mesh.rotation.x = 0;
+                            mesh.isDead = zd.isDead;
+                            mesh.deathTime = zd.deathTime;
                             return;
                         }
                         
@@ -9083,7 +9512,20 @@ export function initNeonBruiser(): Cleanup {
                     if (isHost) {
                         const z = zombies.find(x => x.id === msg.id);
                         if (z && !z.isDead) {
-                            z.health = Math.max(0, z.health - msg.damage);
+                            if ((z.type === 'crawling_tree' || z.type === 'mimic_mushroom') && z.wakeUpTime && (Date.now() + timeOffset) < z.wakeUpTime) {
+                                break;
+                            }
+                            let finalDamage = msg.damage;
+                            if (z.type === 'stronghold_guard') {
+                                const isAttackingState = z.isAttacking || z.state === 'jabbing' || z.state === 'charging' || z.state === 'slashing';
+                                if (!isAttackingState) {
+                                    finalDamage = Math.round(msg.damage * 0.5);
+                                }
+                            }
+                            z.health = Math.max(0, z.health - finalDamage);
+                            if (z.type === 'house_mimic') {
+                                z.isHostile = true;
+                            }
                             if (z.type === 'crawling_tree' && z.state === 'standing') {
                                 z.state = 'rising';
                                 z.stateTime = 0;
@@ -9097,9 +9539,13 @@ export function initNeonBruiser(): Cleanup {
                             z.kz = msg.kz;
                             flashZombieRed(z.mesh);
                             if (z.health <= 0) {
-                                z.isDead = true;
-                                z.deathTime = 0;
-                                handleZombieDeathDrops(z);
+                                if (z.type === 'crawling_tree' || z.type === 'mimic_mushroom') {
+                                    handleMimicSettle(z);
+                                } else {
+                                    z.isDead = true;
+                                    z.deathTime = 0;
+                                    handleZombieDeathDrops(z);
+                                }
                             }
                         }
                     }
@@ -9120,6 +9566,9 @@ export function initNeonBruiser(): Cleanup {
                             v.isDead = true;
                             v.deathTime = 0;
                         }
+                        if (isHost) {
+                            triggerHouseMimicsAggro(v.mesh.position.x, v.mesh.position.z);
+                        }
                     }
                     break;
                 case 'invisibility-state':
@@ -9130,6 +9579,11 @@ export function initNeonBruiser(): Cleanup {
                     break;
                 case 'chat-msg':
                     addChatMessage(msg.text, 'opponent');
+                    break;
+                case 'kill-stronghold-guards':
+                    if (isHost) {
+                        triggerKillStrongholdGuardCommand();
+                    }
                     break;
                 case 'time-sync':
                     timeOffset = msg.offset;
@@ -9251,6 +9705,9 @@ export function initNeonBruiser(): Cleanup {
                     spawnTurretMesh(turretX, turretZ);
                     spawnVillagers(villagerData);
                     spawnInitialAnimals();
+                    spawnCrawlingTrees();
+                    spawnMushroomMimics();
+                    spawnHouseMimicsAtVillages();
                     animate();
                 } else {
                     animate();
@@ -9422,6 +9879,10 @@ export function initNeonBruiser(): Cleanup {
                 clientZombies.forEach((mesh) => {
                     if (mesh.zombieType === 'crawling_tree' || mesh.zombieType === 'mimic_mushroom') {
                         animateCrawlingTreeMesh(mesh, mesh.crawlingTreeState || 'standing', mesh.attackAnimProgress || 0, delta, Date.now());
+                    } else if (mesh.zombieType === 'stronghold_guard') {
+                        animateStrongholdGuardMesh(mesh, mesh.guardState || 'standing', mesh.attackAnimProgress || 0, delta, Date.now());
+                    } else if (mesh.zombieType === 'house_mimic') {
+                        animateHouseMimicMesh(mesh, mesh.guardState || mesh.crawlingTreeState || 'standing', mesh.attackAnimProgress || 0, delta, Date.now());
                     }
                 });
             }
@@ -9957,6 +10418,7 @@ export function initNeonBruiser(): Cleanup {
 
             // Update village house windows glow
             houseWindows.forEach(w => {
+                if (!w.parent) return;
                 if (windowIntensity > 0.05) {
                     w.material.color.setHex(0xffea00); // Glowing yellow
                 } else {
@@ -10422,11 +10884,86 @@ export function initNeonBruiser(): Cleanup {
             }
         }
 
+        function updateBoatMovement(delta) {
+            if (!ridingBoat || !activeBoat) return;
+
+            if (!activeBoat.id) {
+                activeBoat.id = 'boat_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+            }
+
+            const isMoving = moveForces.forward || moveForces.backward || moveForces.left || moveForces.right;
+            
+            // Determine boat speed based on whether it is in water
+            const bx = activeBoat.mesh.position.x;
+            const bz = activeBoat.mesh.position.z;
+            const bTerrainY = getTerrainHeight(bx, bz, activeBoat.inCave);
+            
+            const dx = bx - LAKE_CENTER_X;
+            const dz = bz - LAKE_CENTER_Z;
+            const distToLake = Math.sqrt(dx * dx + dz * dz);
+            const inQuantum = (bx > 1400);
+            const distToDesert = Math.sqrt(Math.pow(bx - 350, 2) + Math.pow(bz + 350, 2));
+            const inDesert = distToDesert < 180;
+            
+            const isBoatInWater = !activeBoat.inCave && !inQuantum && !inDesert && (distToLake < LAKE_RADIUS || bTerrainY <= WATER_Y);
+            const boatSpeed = isBoatInWater ? 8.0 : 1.5; // Fast on water, slow on land
+
+            if (isMoving) {
+                // Find forward direction projected on X-Z
+                const camDir = new THREE.Vector3();
+                camera.getWorldDirection(camDir);
+                camDir.y = 0;
+                camDir.normalize();
+                
+                const moveVector = new THREE.Vector3(0, 0, 0);
+                if (moveForces.forward) moveVector.add(camDir);
+                if (moveForces.backward) moveVector.sub(camDir);
+                if (moveForces.left) {
+                    const leftDir = new THREE.Vector3(-camDir.z, 0, camDir.x);
+                    moveVector.add(leftDir);
+                }
+                if (moveForces.right) {
+                    const rightDir = new THREE.Vector3(camDir.z, 0, -camDir.x);
+                    moveVector.add(rightDir);
+                }
+                
+                if (moveVector.lengthSq() > 0) {
+                    moveVector.normalize();
+                    activeBoat.mesh.rotation.y = Math.atan2(moveVector.x, moveVector.z);
+                    
+                    activeBoat.mesh.position.x += moveVector.x * boatSpeed * delta;
+                    activeBoat.mesh.position.z += moveVector.z * boatSpeed * delta;
+                }
+            }
+
+            // Height/Y position logic: float on water if in water, else snap to terrain
+            if (isBoatInWater) {
+                activeBoat.mesh.position.y = WATER_Y - 0.05;
+            } else {
+                activeBoat.mesh.position.y = bTerrainY;
+            }
+
+            // Sync structural position
+            activeBoat.pos.copy(activeBoat.mesh.position);
+
+            // Sync to other players over network
+            if (isConnected) {
+                sendNetworkMessage({
+                    type: 'sync-placed-object',
+                    id: activeBoat.id,
+                    x: activeBoat.mesh.position.x,
+                    y: activeBoat.mesh.position.y,
+                    z: activeBoat.mesh.position.z,
+                    ry: activeBoat.mesh.rotation.y
+                });
+            }
+        }
+
         // Physics WASD movement updates
         function updatePlayerPhysics(delta) {
             const inQuantum = (camera.position.x > 1400);
-            // Lock position if in turret, bush, riding a quantum cube, or riding a horse
-            if (inTurret || inBush || (typeof ridingCube !== 'undefined' && ridingCube) || ridingHorse) {
+            // Lock position if in turret, bush, riding a quantum cube, riding a horse, or riding a boat
+            if (inTurret || inBush || (typeof ridingCube !== 'undefined' && ridingCube) || ridingHorse || ridingBoat) {
                 if (inBush) {
                     const bush = bushes.find(b => b.id === activeBushId);
                     if (bush) {
@@ -10441,6 +10978,12 @@ export function initNeonBruiser(): Cleanup {
                     knockbackVel.set(0, 0, 0);
                 } else if (ridingHorse && activeHorse) {
                     camera.position.set(activeHorse.mesh.position.x, activeHorse.mesh.position.y + 1.8, activeHorse.mesh.position.z);
+                    velocity.set(0, 0, 0);
+                    knockbackVel.set(0, 0, 0);
+                } else if (ridingBoat && activeBoat) {
+                    // Update boat movement using WASD
+                    updateBoatMovement(delta);
+                    camera.position.set(activeBoat.mesh.position.x, activeBoat.mesh.position.y + 1.0, activeBoat.mesh.position.z);
                     velocity.set(0, 0, 0);
                     knockbackVel.set(0, 0, 0);
                 }
@@ -10461,9 +11004,27 @@ export function initNeonBruiser(): Cleanup {
                 isPlayerInWater = !inQuantum && !inDesert && (initialPDistToLake < LAKE_RADIUS || initialTerrainY <= WATER_Y) && camera.position.y < WATER_Y + 1.8;
             }
 
-            // Apply friction decelerations
-            velocity.x -= velocity.x * (isPlayerInWater ? 12.0 : 8.5) * delta; // higher friction in water
-            velocity.z -= velocity.z * (isPlayerInWater ? 12.0 : 8.5) * delta;
+            // Apply friction decelerations or immediately stop if no movement keys are pressed
+            const isKnockedBack = knockbackVel.lengthSq() > 0.01;
+            if (!moveForces.forward && !moveForces.backward) {
+                if (!isKnockedBack) {
+                    velocity.z = 0;
+                } else {
+                    velocity.z -= velocity.z * (isPlayerInWater ? 12.0 : 8.5) * delta;
+                }
+            } else {
+                velocity.z -= velocity.z * (isPlayerInWater ? 12.0 : 8.5) * delta;
+            }
+
+            if (!moveForces.left && !moveForces.right) {
+                if (!isKnockedBack) {
+                    velocity.x = 0;
+                } else {
+                    velocity.x -= velocity.x * (isPlayerInWater ? 12.0 : 8.5) * delta;
+                }
+            } else {
+                velocity.x -= velocity.x * (isPlayerInWater ? 12.0 : 8.5) * delta;
+            }
             
             knockbackVel.x -= knockbackVel.x * 4.5 * delta;
             knockbackVel.z -= knockbackVel.z * 4.5 * delta;
@@ -10482,6 +11043,29 @@ export function initNeonBruiser(): Cleanup {
                     }
                 }
             });
+
+            // Stronghold ladders check
+            if (camera.position.x >= 508 && camera.position.x <= 532 && camera.position.z >= 918 && camera.position.z <= 942) {
+                const px = camera.position.x;
+                const pz = camera.position.z;
+                const py = camera.position.y - 1.6;
+                
+                // Check L1 ladder (attached to East Wall, x = 526.6, z = 930)
+                const distL1 = Math.sqrt(Math.pow(px - 526.6, 2) + Math.pow(pz - 930, 2));
+                if (distL1 < 0.8 && py >= strongholdBaseY - 0.2 && py <= strongholdBaseY + 4.2) {
+                    nearLadder = true;
+                }
+                // Check L2 ladder (attached to West Wall, x = 513.4, z = 930)
+                const distL2 = Math.sqrt(Math.pow(px - 513.4, 2) + Math.pow(pz - 930, 2));
+                if (distL2 < 0.8 && py >= strongholdBaseY + 3.8 && py <= strongholdBaseY + 8.2) {
+                    nearLadder = true;
+                }
+                // Check L3 ladder (attached to North Wall, x = 520, z = 923.4)
+                const distL3 = Math.sqrt(Math.pow(px - 520, 2) + Math.pow(pz - 923.4, 2));
+                if (distL3 < 0.8 && py >= strongholdBaseY + 7.8 && py <= strongholdBaseY + 12.2) {
+                    nearLadder = true;
+                }
+            }
 
             // Gravity & buoyant floating & ladder climbing
             if (nearLadder) {
@@ -10569,6 +11153,65 @@ export function initNeonBruiser(): Cleanup {
                         }
                     }
                 }
+            }
+
+            // Stronghold horizontal collision resolution
+            if (camera.position.x >= 508 && camera.position.x <= 532 && camera.position.z >= 918 && camera.position.z <= 942) {
+                const playerRadius = 0.4;
+                const px = camera.position.x;
+                const pz = camera.position.z;
+                const py = camera.position.y - 1.6;
+                const strongholdAABBs = [
+                    // North Wall
+                    { minX: 512, maxX: 528, minY: strongholdBaseY, maxY: strongholdBaseY + 12, minZ: 922, maxZ: 923 },
+                    // East Wall
+                    { minX: 527, maxX: 528, minY: strongholdBaseY, maxY: strongholdBaseY + 12, minZ: 922, maxZ: 938 },
+                    // West Wall
+                    { minX: 512, maxX: 513, minY: strongholdBaseY, maxY: strongholdBaseY + 12, minZ: 922, maxZ: 938 },
+                    
+                    // South Wall - Left
+                    { minX: 512, maxX: 518, minY: strongholdBaseY, maxY: strongholdBaseY + 4, minZ: 937, maxZ: 938 },
+                    // South Wall - Right
+                    { minX: 522, maxX: 528, minY: strongholdBaseY, maxY: strongholdBaseY + 4, minZ: 937, maxZ: 938 },
+                    // South Wall - Top (above entrance)
+                    { minX: 518, maxX: 522, minY: strongholdBaseY + 3.0, maxY: strongholdBaseY + 4, minZ: 937, maxZ: 938 },
+                    // South Wall - upper levels
+                    { minX: 512, maxX: 528, minY: strongholdBaseY + 4, maxY: strongholdBaseY + 12, minZ: 937, maxZ: 938 }
+                ];
+                
+                strongholdAABBs.forEach(box => {
+                    const cx = Math.max(box.minX, Math.min(px, box.maxX));
+                    const cz = Math.max(box.minZ, Math.min(pz, box.maxZ));
+                    const dx = px - cx;
+                    const dz = pz - cz;
+                    const distXZ = Math.sqrt(dx * dx + dz * dz);
+                    const overlapY = (py < box.maxY && py + 1.8 > box.minY);
+                    
+                    if (overlapY && distXZ < playerRadius) {
+                        const pen = playerRadius - distXZ;
+                        let pushX = 0;
+                        let pushZ = 0;
+                        if (distXZ > 0.001) {
+                            pushX = (dx / distXZ) * pen;
+                            pushZ = (dz / distXZ) * pen;
+                        } else {
+                            const left = px - box.minX + playerRadius;
+                            const right = box.maxX - px + playerRadius;
+                            const front = pz - box.minZ + playerRadius;
+                            const back = box.maxZ - pz + playerRadius;
+                            const minPen = Math.min(left, right, front, back);
+                            if (minPen === left) pushX = -left;
+                            else if (minPen === right) pushX = right;
+                            else if (minPen === front) pushZ = -front;
+                            else pushZ = back;
+                        }
+                        
+                        camera.position.x += pushX;
+                        camera.position.z += pushZ;
+                        if (Math.abs(pushX) > 0) velocity.x = 0;
+                        if (Math.abs(pushZ) > 0) velocity.z = 0;
+                    }
+                });
             }
 
             let groundedThisFrame = nearLadder;
@@ -10712,6 +11355,52 @@ export function initNeonBruiser(): Cleanup {
                     }
                 }
             });
+
+            // Stronghold vertical collision resolution
+            if (camera.position.x >= 508 && camera.position.x <= 532 && camera.position.z >= 918 && camera.position.z <= 942) {
+                const px = camera.position.x;
+                const pz = camera.position.z;
+                const py = camera.position.y - 1.6;
+                const playerRadius = 0.4;
+                const strongholdFloors = [
+                    // Level 1 Floor
+                    { minX: 512, maxX: 528, minY: strongholdBaseY - 0.5, maxY: strongholdBaseY, minZ: 922, maxZ: 938 },
+                    // Level 2 Floor (L1 Ceiling)
+                    { minX: 512, maxX: 525, minY: strongholdBaseY + 3.5, maxY: strongholdBaseY + 4.0, minZ: 922, maxZ: 938 },
+                    { minX: 525, maxX: 527, minY: strongholdBaseY + 3.5, maxY: strongholdBaseY + 4.0, minZ: 922, maxZ: 929 },
+                    { minX: 525, maxX: 527, minY: strongholdBaseY + 3.5, maxY: strongholdBaseY + 4.0, minZ: 931, maxZ: 938 },
+                    
+                    // Level 3 Floor (L2 Ceiling)
+                    { minX: 515, maxX: 528, minY: strongholdBaseY + 7.5, maxY: strongholdBaseY + 8.0, minZ: 922, maxZ: 938 },
+                    { minX: 513, maxX: 515, minY: strongholdBaseY + 7.5, maxY: strongholdBaseY + 8.0, minZ: 922, maxZ: 929 },
+                    { minX: 513, maxX: 515, minY: strongholdBaseY + 7.5, maxY: strongholdBaseY + 8.0, minZ: 931, maxZ: 938 },
+                    
+                    // Roof (L3 Ceiling)
+                    { minX: 512, maxX: 528, minY: strongholdBaseY + 11.5, maxY: strongholdBaseY + 12.0, minZ: 925, maxZ: 938 },
+                    { minX: 512, maxX: 519, minY: strongholdBaseY + 11.5, maxY: strongholdBaseY + 12.0, minZ: 922, maxZ: 925 },
+                    { minX: 521, maxX: 528, minY: strongholdBaseY + 11.5, maxY: strongholdBaseY + 12.0, minZ: 922, maxZ: 925 }
+                ];
+                
+                strongholdFloors.forEach(box => {
+                    if (px >= box.minX - playerRadius && px <= box.maxX + playerRadius && pz >= box.minZ - playerRadius && pz <= box.maxZ + playerRadius) {
+                        // Falling onto floor
+                        if (velocity.y <= 0) {
+                            if (py >= box.maxY - 0.3 && py < box.maxY) {
+                                camera.position.y = box.maxY + 1.6;
+                                velocity.y = 0;
+                                groundedThisFrame = true;
+                            }
+                        }
+                        // Jumping into ceiling
+                        else if (velocity.y > 0) {
+                            if (py + 1.8 > box.minY && py + 1.8 < box.minY + 0.3) {
+                                camera.position.y = box.minY - 0.201;
+                                velocity.y = 0;
+                            }
+                        }
+                    }
+                });
+            }
 
             // Snap Y coordinate to heightmapped terrain Y
             const terrainY = getTerrainHeight(camera.position.x, camera.position.z, playerInCave);
@@ -10891,6 +11580,9 @@ export function initNeonBruiser(): Cleanup {
                     for (let j = zombies.length - 1; j >= 0; j--) {
                         const z = zombies[j];
                         if (z.isDead) continue;
+                        if ((z.type === 'crawling_tree' || z.type === 'mimic_mushroom') && z.wakeUpTime && (Date.now() + timeOffset) < z.wakeUpTime) {
+                            continue;
+                        }
                         const zChestPos = z.mesh.position.clone().add(new THREE.Vector3(0, 1.0, 0));
                         const zDist = arrow.pos.distanceTo(zChestPos);
                         if (zDist < 1.6) {
@@ -10912,9 +11604,13 @@ export function initNeonBruiser(): Cleanup {
                             z.kx = kVel.x * 12.0;
                             z.kz = kVel.z * 12.0;
                             if (z.health <= 0) {
-                                z.isDead = true;
-                                z.deathTime = 0;
-                                handleZombieDeathDrops(z);
+                                if (z.type === 'crawling_tree' || z.type === 'mimic_mushroom') {
+                                    handleMimicSettle(z);
+                                } else {
+                                    z.isDead = true;
+                                    z.deathTime = 0;
+                                    handleZombieDeathDrops(z);
+                                }
                             }
                             scene.remove(arrow.mesh);
                             localArrows.splice(i, 1);
@@ -10923,6 +11619,9 @@ export function initNeonBruiser(): Cleanup {
                     }
                 } else {
                     for (let [id, mesh] of clientZombies) {
+                        if ((mesh.zombieType === 'crawling_tree' || mesh.zombieType === 'mimic_mushroom') && mesh.crawlingTreeState === 'settled') {
+                            continue;
+                        }
                         const zChestPos = mesh.position.clone().add(new THREE.Vector3(0, 1.0, 0));
                         const zDist = arrow.pos.distanceTo(zChestPos);
                         if (zDist < 1.6) {
@@ -10972,6 +11671,10 @@ export function initNeonBruiser(): Cleanup {
                         if (v.health <= 0) {
                             v.isDead = true;
                             v.deathTime = 0;
+                        }
+                        
+                        if (isHost) {
+                            triggerHouseMimicsAggro(vChestPos.x, vChestPos.z);
                         }
                         
                         sendNetworkMessage({
@@ -11180,9 +11883,10 @@ export function initNeonBruiser(): Cleanup {
                     const py = camera.position.y;
                     const pz = camera.position.z;
                     const distToHost = arrow.pos.distanceTo(new THREE.Vector3(px, py - 0.5, pz));
+                    const isJoseph = (myAppearance.name || '').toLowerCase().includes('joseph');
                     if (distToHost < 1.6) {
                         const kVel = arrow.vel.clone().normalize().multiplyScalar(10.0);
-                        takeDamage(12, kVel.x, kVel.z, "Shot by Skeleton!");
+                        takeDamage(isJoseph ? 15 : 12, kVel.x, kVel.z, "Shot by Skeleton!");
                         scene.remove(arrow.mesh);
                         skeletonArrows.splice(i, 1);
                         continue;
@@ -11198,7 +11902,7 @@ export function initNeonBruiser(): Cleanup {
                             const kVel = arrow.vel.clone().normalize().multiplyScalar(10.0);
                             sendNetworkMessage({
                                 type: 'zombie-hit',
-                                damage: 12,
+                                damage: isJoseph ? 15 : 12,
                                 kx: kVel.x,
                                 kz: kVel.z
                             });
@@ -11954,6 +12658,37 @@ export function initNeonBruiser(): Cleanup {
 
         function handleKeyPressF() {
             if (!gameActive || myHealth <= 0 || mapOpen || chatOpen || inventoryOpen) return;
+
+            if (ridingBoat) {
+                ridingBoat = false;
+                camera.position.y += 1.0;
+                activeBoat = null;
+                addChatMessage("Exited the boat.", "system");
+                return;
+            }
+
+            // Check if near any boat to enter
+            let closestBoat = null;
+            let minBoatDist = Infinity;
+            placedObjects.forEach(obj => {
+                if (obj.type === 'boat') {
+                    const dx = camera.position.x - obj.pos.x;
+                    const dy = camera.position.y - obj.pos.y;
+                    const dz = camera.position.z - obj.pos.z;
+                    const dist = Math.sqrt(dx * dx + dz * dz);
+                    if (dist < minBoatDist) {
+                        minBoatDist = dist;
+                        closestBoat = obj;
+                    }
+                }
+            });
+
+            if (closestBoat && minBoatDist < 4.0) {
+                ridingBoat = true;
+                activeBoat = closestBoat;
+                addChatMessage("Riding boat! WASD to steer, Space, F or E to dismount.", "system");
+                return;
+            }
 
             const currentItem = hotbarItems[selectedHotbarIndex];
             if (currentItem === 'fishing_rod') {
@@ -13483,6 +14218,112 @@ export function initNeonBruiser(): Cleanup {
             return dataURL;
         }
 
+        function createCurvedPickaxeHeadGroup(material) {
+            const group = new THREE.Group();
+            
+            const leftGeo = new THREE.BoxGeometry(0.12, 0.04, 0.04);
+            const leftHead = new THREE.Mesh(leftGeo, material);
+            leftHead.position.set(-0.06, 0, 0);
+            leftHead.rotation.y = -Math.PI / 12;
+            leftHead.castShadow = true;
+            group.add(leftHead);
+            
+            const rightHead = new THREE.Mesh(leftGeo, material);
+            rightHead.position.set(0.06, 0, 0);
+            rightHead.rotation.y = Math.PI / 12;
+            rightHead.castShadow = true;
+            group.add(rightHead);
+
+            const tipGeo = new THREE.BoxGeometry(0.03, 0.03, 0.03);
+            const leftTip = new THREE.Mesh(tipGeo, material);
+            leftTip.position.set(-0.115, 0, 0.015);
+            leftTip.rotation.y = -Math.PI / 6;
+            leftTip.castShadow = true;
+            group.add(leftTip);
+
+            const rightTip = new THREE.Mesh(tipGeo, material);
+            rightTip.position.set(0.115, 0, 0.015);
+            rightTip.rotation.y = Math.PI / 6;
+            rightTip.castShadow = true;
+            group.add(rightTip);
+            
+            return group;
+        }
+
+        function buildBoatMesh(scale = 1.0) {
+            const group = new THREE.Group();
+            const woodMat = new THREE.MeshStandardMaterial({ color: 0xa05a2c, roughness: 0.9 });
+            const metalMat = new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.8, roughness: 0.3 });
+
+            const centerBottom = new THREE.Mesh(new THREE.BoxGeometry(0.8 * scale, 0.05 * scale, 0.6 * scale), woodMat);
+            centerBottom.position.y = 0.025 * scale;
+            group.add(centerBottom);
+
+            const frontBottom = new THREE.Mesh(new THREE.BoxGeometry(0.4 * scale, 0.05 * scale, 0.3 * scale), woodMat);
+            frontBottom.position.set(0.6 * scale, 0.025 * scale, 0);
+            group.add(frontBottom);
+
+            const backBottom = new THREE.Mesh(new THREE.BoxGeometry(0.4 * scale, 0.05 * scale, 0.3 * scale), woodMat);
+            backBottom.position.set(-0.6 * scale, 0.025 * scale, 0);
+            group.add(backBottom);
+
+            const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.8 * scale, 0.4 * scale, 0.05 * scale), woodMat);
+            leftWall.position.set(0, 0.2 * scale, 0.3 * scale);
+            group.add(leftWall);
+
+            const rightWall = new THREE.Mesh(new THREE.BoxGeometry(0.8 * scale, 0.4 * scale, 0.05 * scale), woodMat);
+            rightWall.position.set(0, 0.2 * scale, -0.3 * scale);
+            group.add(rightWall);
+
+            const leftBow = new THREE.Mesh(new THREE.BoxGeometry(0.5 * scale, 0.4 * scale, 0.05 * scale), woodMat);
+            leftBow.position.set(0.6 * scale, 0.2 * scale, 0.15 * scale);
+            leftBow.rotation.y = -Math.atan2(0.3, 0.4);
+            group.add(leftBow);
+
+            const rightBow = new THREE.Mesh(new THREE.BoxGeometry(0.5 * scale, 0.4 * scale, 0.05 * scale), woodMat);
+            rightBow.position.set(0.6 * scale, 0.2 * scale, -0.15 * scale);
+            rightBow.rotation.y = Math.atan2(0.3, 0.4);
+            group.add(rightBow);
+
+            const leftStern = new THREE.Mesh(new THREE.BoxGeometry(0.5 * scale, 0.4 * scale, 0.05 * scale), woodMat);
+            leftStern.position.set(-0.6 * scale, 0.2 * scale, 0.15 * scale);
+            leftStern.rotation.y = Math.atan2(0.3, 0.4);
+            group.add(leftStern);
+
+            const rightStern = new THREE.Mesh(new THREE.BoxGeometry(0.5 * scale, 0.4 * scale, 0.05 * scale), woodMat);
+            rightStern.position.set(-0.6 * scale, 0.2 * scale, -0.15 * scale);
+            rightStern.rotation.y = -Math.atan2(0.3, 0.4);
+            group.add(rightStern);
+
+            const midSeat = new THREE.Mesh(new THREE.BoxGeometry(0.18 * scale, 0.04 * scale, 0.58 * scale), woodMat);
+            midSeat.position.set(0, 0.2 * scale, 0);
+            group.add(midSeat);
+
+            const backSeat = new THREE.Mesh(new THREE.BoxGeometry(0.25 * scale, 0.15 * scale, 0.38 * scale), woodMat);
+            backSeat.position.set(-0.55 * scale, 0.125 * scale, 0);
+            group.add(backSeat);
+
+            const frontSeat = new THREE.Mesh(new THREE.BoxGeometry(0.25 * scale, 0.15 * scale, 0.38 * scale), woodMat);
+            frontSeat.position.set(0.55 * scale, 0.125 * scale, 0);
+            group.add(frontSeat);
+
+            try {
+                const rowlockL = new THREE.Mesh(new THREE.TorusGeometry(0.04 * scale, 0.012 * scale, 8, 16), metalMat);
+                rowlockL.position.set(0, 0.4 * scale, 0.3 * scale);
+                rowlockL.rotation.y = Math.PI / 2;
+                group.add(rowlockL);
+
+                const rowlockR = new THREE.Mesh(new THREE.TorusGeometry(0.04 * scale, 0.012 * scale, 8, 16), metalMat);
+                rowlockR.position.set(0, 0.4 * scale, -0.3 * scale);
+                rowlockR.rotation.y = Math.PI / 2;
+                group.add(rowlockR);
+            } catch (e) {
+                console.error("Failed to create TorusGeometry", e);
+            }
+
+            return group;
+        }
+
         function createDroppedFoodMesh(type) {
             const group = new THREE.Group();
             
@@ -13767,10 +14608,8 @@ export function initNeonBruiser(): Cleanup {
                 group.add(blade);
             }
             else if (type === 'boat') {
-                const woodMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
-                const base = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.04, 0.14), woodMat);
-                base.castShadow = true;
-                group.add(base);
+                const boatItemMesh = buildBoatMesh(0.2);
+                group.add(boatItemMesh);
             }
             else if (type === 'stone_stairs' || type === 'wooden_stairs') {
                 const mat = new THREE.MeshStandardMaterial({ color: type === 'stone_stairs' ? 0x888888 : 0xc49a6c, roughness: 0.8 });
@@ -14772,6 +15611,11 @@ export function initNeonBruiser(): Cleanup {
                     addChatMessage("Respawn point reset to main spawn!", "system");
                 }
             }
+            if (activeBoat === obj) {
+                ridingBoat = false;
+                activeBoat = null;
+                addChatMessage("Your boat was broken!", "system");
+            }
             scene.remove(obj.mesh);
             const index = placedObjects.indexOf(obj);
             if (index !== -1) {
@@ -14806,6 +15650,11 @@ export function initNeonBruiser(): Cleanup {
                         addChatMessage("Respawn point reset to main spawn!", "system");
                         saveWorld(false);
                     }
+                }
+                if (activeBoat === obj) {
+                    ridingBoat = false;
+                    activeBoat = null;
+                    addChatMessage("Your boat was broken!", "system");
                 }
                 scene.remove(obj.mesh);
                 placedObjects.splice(index, 1);
@@ -15118,7 +15967,7 @@ export function initNeonBruiser(): Cleanup {
             return group;
         }
 
-        function spawnPlacedObject(type, pos, sendNetwork = false) {
+        function spawnPlacedObject(type, pos, sendNetwork = false, existingId = null) {
             let mesh;
             if (type === 'wool') {
                 mesh = createPlacedWoolMesh();
@@ -15189,18 +16038,7 @@ export function initNeonBruiser(): Cleanup {
                 mesh = group;
                 mesh.position.copy(pos);
             } else if (type === 'boat') {
-                const group = new THREE.Group();
-                const woodMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
-                const base = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.2, 0.7), woodMat);
-                base.position.y = 0.1;
-                group.add(base);
-                const left = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.4, 0.1), woodMat);
-                left.position.set(0, 0.2, 0.35);
-                group.add(left);
-                const right = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.4, 0.1), woodMat);
-                right.position.set(0, 0.2, -0.35);
-                group.add(right);
-                mesh = group;
+                mesh = buildBoatMesh(1.0);
                 mesh.position.copy(pos);
             } else if (type === 'stone_stairs' || type === 'wooden_stairs') {
                 const group = new THREE.Group();
@@ -15425,6 +16263,7 @@ export function initNeonBruiser(): Cleanup {
                 
                 mesh.visible = true; // initially visible when placed
                 const newObj = {
+                    id: existingId || (type + '_' + Date.now() + '_' + Math.floor(Math.random() * 1000)),
                     type: type,
                     mesh: mesh,
                     pos: pos.clone(),
@@ -15453,7 +16292,8 @@ export function initNeonBruiser(): Cleanup {
                         x: pos.x,
                         y: pos.y,
                         z: pos.z,
-                        inCave: isDimensionCave(playerInCave)
+                        inCave: isDimensionCave(playerInCave),
+                        id: newObj.id
                     });
                 }
                 return newObj;
@@ -15604,6 +16444,10 @@ export function initNeonBruiser(): Cleanup {
         }
 
         function createExplosionEffect(ex, ey, ez, maxRadius = 6.5, maxDamage = 32, setFire = true) {
+            const isJoseph = (myAppearance.name || '').toLowerCase().includes('joseph');
+            if (isJoseph && maxDamage === 10) {
+                maxDamage = 15;
+            }
             AudioSynth.playBoom();
             
             const blastGeo = new THREE.SphereGeometry(0.1, 16, 16);
@@ -15682,6 +16526,9 @@ export function initNeonBruiser(): Cleanup {
             if (isHost && gameActive) {
                 zombies.forEach(z => {
                     if (z.isDead) return;
+                    if ((z.type === 'crawling_tree' || z.type === 'mimic_mushroom') && z.wakeUpTime && (Date.now() + timeOffset) < z.wakeUpTime) {
+                        return;
+                    }
                     const zx = z.mesh.position.x;
                     const zz = z.mesh.position.z;
                     const zdx = zx - ex;
@@ -15690,7 +16537,17 @@ export function initNeonBruiser(): Cleanup {
                     if (zdistXZ < maxRadius) {
                         const zdmg = Math.round(maxDamage * (1.0 - zdistXZ / maxRadius));
                         if (zdmg > 0) {
-                            z.health = Math.max(0, z.health - zdmg);
+                            let finalDamage = zdmg;
+                            if (z.type === 'stronghold_guard') {
+                                const isAttackingState = z.isAttacking || z.state === 'jabbing' || z.state === 'charging' || z.state === 'slashing';
+                                if (!isAttackingState) {
+                                    finalDamage = Math.round(zdmg * 0.5);
+                                }
+                            }
+                            z.health = Math.max(0, z.health - finalDamage);
+                            if (z.type === 'house_mimic') {
+                                z.isHostile = true;
+                            }
                             if (setFire) {
                                 z.burnTime = 10; // set on fire
                             }
@@ -15713,9 +16570,13 @@ export function initNeonBruiser(): Cleanup {
                             flashZombieRed(z.mesh);
                             
                             if (z.health <= 0) {
-                                z.isDead = true;
-                                z.deathTime = 0;
-                                handleZombieDeathDrops(z);
+                                if (z.type === 'crawling_tree' || z.type === 'mimic_mushroom') {
+                                    handleMimicSettle(z);
+                                } else {
+                                    z.isDead = true;
+                                    z.deathTime = 0;
+                                    handleZombieDeathDrops(z);
+                                }
                             }
                         }
                     }
@@ -15941,6 +16802,162 @@ export function initNeonBruiser(): Cleanup {
             return group;
         }
 
+        function createHouseMimicMesh(isSavanna = false) {
+            const group = new THREE.Group();
+            group.zombieType = 'house_mimic';
+
+            const wallMat = isSavanna 
+                ? new THREE.MeshStandardMaterial({ color: 0x8b4513, roughness: 0.85 })
+                : new THREE.MeshStandardMaterial({ color: 0x4a322c, roughness: 0.8 });
+            
+            const roofMat = isSavanna 
+                ? new THREE.MeshStandardMaterial({ color: 0xdeb887, roughness: 0.7 })
+                : new THREE.MeshStandardMaterial({ color: 0x5a1835, roughness: 0.7 });
+
+            const interiorMat = new THREE.MeshStandardMaterial({ color: 0x330000, roughness: 0.9 });
+            const tongueMat = new THREE.MeshStandardMaterial({ color: 0xff3333, roughness: 0.6 });
+            const teethMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 });
+            const legMat = new THREE.MeshStandardMaterial({ color: 0x3d2314, roughness: 0.9 });
+
+            // 1. Lower Base Structure (Lower half of walls)
+            const lowerBase = new THREE.Mesh(new THREE.BoxGeometry(5, 2.0, 4), wallMat);
+            lowerBase.position.y = 1.0;
+            lowerBase.castShadow = true;
+            lowerBase.receiveShadow = true;
+            group.add(lowerBase);
+
+            // Dark interior lining
+            const interior = new THREE.Mesh(new THREE.BoxGeometry(4.9, 0.05, 3.9), interiorMat);
+            interior.position.y = 2.001;
+            group.add(interior);
+
+            // Red tongue
+            const tongue = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.15, 2.0), tongueMat);
+            tongue.position.set(0, 2.05, 0.5);
+            group.add(tongue);
+
+            // Lower Teeth (pointing up, front rim at z = 1.9)
+            const toothGeo = new THREE.ConeGeometry(0.2, 0.4, 4);
+            toothGeo.rotateY(Math.PI / 4); // align cone face
+
+            // 5 lower teeth offset from upper teeth
+            const lowerTeethX = [-1.8, -0.9, 0, 0.9, 1.8];
+            lowerTeethX.forEach(xPos => {
+                const tooth = new THREE.Mesh(toothGeo, teethMat);
+                tooth.position.set(xPos, 2.2, 1.9);
+                group.add(tooth);
+            });
+
+            // 2. Upper Head Group (Hinged at the back edge of lower base: y = 2.0, z = -2.0)
+            const upperGroup = new THREE.Group();
+            upperGroup.position.set(0, 2.0, -2.0);
+            group.add(upperGroup);
+
+            // Upper walls (relative to upperGroup pivot)
+            const upperBase = new THREE.Mesh(new THREE.BoxGeometry(5, 1.5, 4), wallMat);
+            upperBase.position.set(0, 0.75, 2.0);
+            upperBase.castShadow = true;
+            upperBase.receiveShadow = true;
+            upperGroup.add(upperBase);
+
+            // Roof (pyramid shape)
+            const roofGeo = new THREE.ConeGeometry(4, 2.5, 4);
+            roofGeo.rotateY(Math.PI / 4); // align with walls
+            const roof = new THREE.Mesh(roofGeo, roofMat);
+            roof.position.set(0, 2.25, 2.0);
+            roof.castShadow = true;
+            upperGroup.add(roof);
+
+            // Emissive Windows (glow at night)
+            const winGeom = new THREE.BoxGeometry(0.1, 0.8, 0.8);
+            const windowMat = new THREE.MeshBasicMaterial({ color: 0x222222 }); // Start turned off
+            
+            const w1 = new THREE.Mesh(winGeom, windowMat.clone());
+            w1.position.set(2.51, 0.1, 2.9);
+            upperGroup.add(w1);
+            houseWindows.push(w1);
+
+            const w2 = new THREE.Mesh(winGeom, windowMat.clone());
+            w2.position.set(-2.51, 0.1, 1.1);
+            upperGroup.add(w2);
+            houseWindows.push(w2);
+
+            // Upper Teeth (pointing down, front rim at relative z = 3.9)
+            const upperToothGeo = new THREE.ConeGeometry(0.2, 0.4, 4);
+            upperToothGeo.rotateX(Math.PI); // point down
+            upperToothGeo.rotateY(Math.PI / 4);
+
+            // 6 upper teeth meshing between lower teeth
+            const upperTeethX = [-2.25, -1.35, -0.45, 0.45, 1.35, 2.25];
+            upperTeethX.forEach(xPos => {
+                const tooth = new THREE.Mesh(upperToothGeo, teethMat);
+                tooth.position.set(xPos, -0.2, 3.9);
+                upperGroup.add(tooth);
+            });
+
+            // 3. Eight Spider Legs (4 on each side, x = 2.4 and x = -2.4)
+            function buildSpiderLeg(side, index) {
+                const legGroup = new THREE.Group();
+                const zOffset = 1.5 - index * 1.0;
+                legGroup.position.set(side * 2.4, 0.5, zOffset);
+                
+                const upperGeo = new THREE.BoxGeometry(1.2, 0.18, 0.18);
+                upperGeo.translate(side * 0.6, 0, 0);
+                const upperLeg = new THREE.Mesh(upperGeo, legMat);
+                upperLeg.castShadow = true;
+                legGroup.add(upperLeg);
+                
+                const lowerGeo = new THREE.BoxGeometry(0.15, 1.5, 0.15);
+                lowerGeo.translate(0, -0.75, 0);
+                const lowerLeg = new THREE.Mesh(lowerGeo, legMat);
+                lowerLeg.position.set(side * 1.2, 0, 0);
+                lowerLeg.castShadow = true;
+                upperLeg.add(lowerLeg);
+                
+                upperLeg.rotation.z = side * 0.35;
+                lowerLeg.rotation.z = -side * 0.9;
+                
+                const spreadAngles = [-side * 0.4, -side * 0.15, side * 0.15, side * 0.4];
+                legGroup.rotation.y = spreadAngles[index];
+                
+                legGroup.castShadow = true;
+                legGroup.visible = false;
+                legGroup.scale.set(0.01, 0.01, 0.01);
+                
+                return legGroup;
+            }
+
+            const legL1 = buildSpiderLeg(1, 0);
+            const legR1 = buildSpiderLeg(-1, 0);
+            const legL2 = buildSpiderLeg(1, 1);
+            const legR2 = buildSpiderLeg(-1, 1);
+            const legL3 = buildSpiderLeg(1, 2);
+            const legR3 = buildSpiderLeg(-1, 2);
+            const legL4 = buildSpiderLeg(1, 3);
+            const legR4 = buildSpiderLeg(-1, 3);
+
+            const legs = [legL1, legR1, legL2, legR2, legL3, legR3, legL4, legR4];
+            legs.forEach(leg => {
+                group.add(leg);
+            });
+
+            // Store references in userData for animateHouseMimicMesh
+            group.userData = {
+                type: 'house_mimic',
+                upperGroup: upperGroup,
+                legL1: legL1,
+                legR1: legR1,
+                legL2: legL2,
+                legR2: legR2,
+                legL3: legL3,
+                legR3: legR3,
+                legL4: legL4,
+                legR4: legR4
+            };
+
+            return group;
+        }
+
         function spawnCrawlingTrees() {
             function findNearbyLand(x, z, maxDist = 30) {
                 let ty = getTerrainHeight(x, z, false);
@@ -15982,6 +16999,15 @@ export function initNeonBruiser(): Cleanup {
                 { x: 320, z: 660 },
                 { x: 360, z: 630 }
             ];
+
+            // Add 5 coordinates on the Stronghold Island (520, 930)
+            const strongholdCoords = [
+                { x: 500, z: 915 },
+                { x: 540, z: 925 },
+                { x: 520, z: 955 },
+                { x: 495, z: 935 },
+                { x: 535, z: 910 }
+            ];
             
             coords.forEach((c, idx) => {
                 const land = findNearbyLand(c.x, c.z, 30);
@@ -16016,7 +17042,8 @@ export function initNeonBruiser(): Cleanup {
                     lastAttackTime: 0,
                     isAttacking: false,
                     attackAnimTime: 0,
-                    health: 99999, // Unkillable
+                    health: 50,
+                    maxHealth: 50,
                     burnTime: 0,
                     kx: 0,
                     kz: 0,
@@ -16067,7 +17094,60 @@ export function initNeonBruiser(): Cleanup {
                     lastAttackTime: 0,
                     isAttacking: false,
                     attackAnimTime: 0,
-                    health: 99999,
+                    health: 50,
+                    maxHealth: 50,
+                    burnTime: 0,
+                    kx: 0,
+                    kz: 0,
+                    isDead: false,
+                    deathTime: 0,
+                    
+                    state: 'standing',
+                    stateTime: 0,
+                    chaseDuration: 15,
+                    attackAnimProgress: 0,
+                    isWandering: false,
+                    wanderTargetX: 0,
+                    wanderTargetZ: 0,
+                    isFleeing: false,
+                    nextWanderTime: Date.now() + (20000 + Math.random() * 40000)
+                });
+            });
+
+            strongholdCoords.forEach((c, idx) => {
+                const land = findNearbyLand(c.x, c.z, 30);
+                if (!land) return;
+                
+                const tx = land.x;
+                const tz = land.z;
+                const ty = land.y;
+                
+                const id = `crawling_tree_stronghold_${idx}`;
+                if (zombies.some(z => z.id === id)) return;
+                
+                const mesh = createCrawlingTreeMesh();
+                mesh.zombieType = 'crawling_tree';
+                mesh.position.set(tx, ty, tz);
+                scene.add(mesh);
+                
+                zombies.push({
+                    id: id,
+                    mesh: mesh,
+                    type: 'crawling_tree',
+                    x: tx,
+                    y: ty,
+                    z: tz,
+                    startX: tx,
+                    startY: ty,
+                    startZ: tz,
+                    inCave: false,
+                    chunkKey: 'stronghold_island',
+                    ry: 0,
+                    lastAttackTime: 0,
+                    isAttacking: false,
+                    attackAnimTime: 0,
+                    health: 50,
+                    maxHealth: 50,
                     burnTime: 0,
                     kx: 0,
                     kz: 0,
@@ -16155,7 +17235,8 @@ export function initNeonBruiser(): Cleanup {
                     lastAttackTime: 0,
                     isAttacking: false,
                     attackAnimTime: 0,
-                    health: 99999, // Unkillable
+                    health: 50,
+                    maxHealth: 50,
                     burnTime: 0,
                     kx: 0,
                     kz: 0,
@@ -16182,7 +17263,7 @@ export function initNeonBruiser(): Cleanup {
             const isMushroom = mesh.userData.type === 'mimic_mushroom';
             const defaultTrunkY = isMushroom ? 1.25 : 1.75;
             
-            if (state === 'standing') {
+            if (state === 'standing' || state === 'settled') {
                 legFL.visible = false;
                 legFR.visible = false;
                 legBL.visible = false;
@@ -16203,48 +17284,50 @@ export function initNeonBruiser(): Cleanup {
                 legBL.rotation.set(0, 0, 0);
                 legBR.rotation.set(0, 0, 0);
                 
-                // Shake check: determine if mimic tree should shiver/rustle leaves
-                const px = mesh.position.x;
-                const pz = mesh.position.z;
-                // Deterministic pseudo-random seed based on coordinates so they don't shake in sync
-                const timeOffset = Math.abs(Math.sin(px * 12.9898 + pz * 78.233)) * 100000;
-                const cycle = 6000 + (timeOffset % 3000); // 6 to 9 seconds cycle (slightly more frequent)
-                const t = (now + timeOffset) % cycle;
-                const shakeDuration = 1800; // Shakes for 1.8 seconds out of the cycle
+                mesh.rotation.x = 0;
+                mesh.rotation.z = 0;
+                trunk.position.y = defaultTrunkY;
+                trunk.rotation.set(0, 0, 0);
                 
-                if (t < shakeDuration) {
-                    const progress = t / shakeDuration;
-                    const intensity = Math.sin(progress * Math.PI); // Fade in and out shake intensity
+                if (leaves) {
+                    leaves.forEach((leaf) => {
+                        leaf.rotation.x = 0;
+                        leaf.rotation.z = 0;
+                        leaf.position.x = 0;
+                        leaf.position.z = 0;
+                    });
+                }
+
+                if (state === 'standing') {
+                    // Shake check: determine if mimic tree should shiver/rustle leaves
+                    const px = mesh.position.x;
+                    const pz = mesh.position.z;
+                    // Deterministic pseudo-random seed based on coordinates so they don't shake in sync
+                    const timeOffset = Math.abs(Math.sin(px * 12.9898 + pz * 78.233)) * 100000;
+                    const cycle = 6000 + (timeOffset % 3000); // 6 to 9 seconds cycle (slightly more frequent)
+                    const t = (now + timeOffset) % cycle;
+                    const shakeDuration = 1800; // Shakes for 1.8 seconds out of the cycle
                     
-                    // Shiver/tilt the entire tree mesh
-                    mesh.rotation.z = Math.sin(now * 0.06) * 0.045 * intensity;
-                    mesh.rotation.x = Math.cos(now * 0.055) * 0.045 * intensity;
-                    trunk.position.y = defaultTrunkY;
-                    trunk.rotation.set(0, 0, 0);
-                    
-                    // Shake the leaves/cap (rustle them dynamically)
-                    if (leaves) {
-                        leaves.forEach((leaf, idx) => {
-                            const phase = idx * 1.5;
-                            leaf.rotation.z = Math.sin(now * 0.08 + phase) * 0.16 * intensity;
-                            leaf.rotation.x = Math.cos(now * 0.075 + phase) * 0.12 * intensity;
-                            leaf.position.x = Math.sin(now * 0.09 + phase) * 0.12 * intensity;
-                            leaf.position.z = Math.cos(now * 0.085 + phase) * 0.12 * intensity;
-                        });
-                    }
-                } else {
-                    mesh.rotation.x = 0;
-                    mesh.rotation.z = 0;
-                    trunk.position.y = defaultTrunkY;
-                    trunk.rotation.set(0, 0, 0);
-                    
-                    if (leaves) {
-                        leaves.forEach((leaf) => {
-                            leaf.rotation.x = 0;
-                            leaf.rotation.z = 0;
-                            leaf.position.x = 0;
-                            leaf.position.z = 0;
-                        });
+                    if (t < shakeDuration) {
+                        const progress = t / shakeDuration;
+                        const intensity = Math.sin(progress * Math.PI); // Fade in and out shake intensity
+                        
+                        // Shiver/tilt the entire tree mesh
+                        mesh.rotation.z = Math.sin(now * 0.06) * 0.045 * intensity;
+                        mesh.rotation.x = Math.cos(now * 0.055) * 0.045 * intensity;
+                        trunk.position.y = defaultTrunkY;
+                        trunk.rotation.set(0, 0, 0);
+                        
+                        // Shake the leaves/cap (rustle them dynamically)
+                        if (leaves) {
+                            leaves.forEach((leaf, idx) => {
+                                const phase = idx * 1.5;
+                                leaf.rotation.z = Math.sin(now * 0.08 + phase) * 0.16 * intensity;
+                                leaf.rotation.x = Math.cos(now * 0.075 + phase) * 0.12 * intensity;
+                                leaf.position.x = Math.sin(now * 0.09 + phase) * 0.12 * intensity;
+                                leaf.position.z = Math.cos(now * 0.085 + phase) * 0.12 * intensity;
+                            });
+                        }
                     }
                 }
             } else if (state === 'rising') {
@@ -16384,6 +17467,548 @@ export function initNeonBruiser(): Cleanup {
             }
         }
 
+        function animateHouseMimicMesh(mesh, state, attackAnimProgress, delta, now) {
+            const { upperGroup, legL1, legR1, legL2, legR2, legL3, legR3, legL4, legR4 } = mesh.userData;
+            if (!upperGroup) return;
+            
+            const legs = [legL1, legR1, legL2, legR2, legL3, legR3, legL4, legR4];
+            
+            if (state === 'standing' || state === 'settled') {
+                legs.forEach(leg => {
+                    if (leg) {
+                        leg.visible = false;
+                        leg.scale.set(0.01, 0.01, 0.01);
+                        leg.position.y = 0;
+                    }
+                });
+
+                upperGroup.rotation.x = 0;
+                mesh.rotation.x = 0;
+                mesh.rotation.z = 0;
+                
+                // Shake / yawn check
+                const px = mesh.position.x;
+                const pz = mesh.position.z;
+                const timeOffset = Math.abs(Math.sin(px * 12.9898 + pz * 78.233)) * 100000;
+                
+                // Yawn cycle (every 20 seconds)
+                const yawnCycle = 20000;
+                const tYawn = (now + timeOffset) % yawnCycle;
+                const yawnDuration = 4000; // yawns for 4 seconds
+                
+                if (tYawn < yawnDuration) {
+                    const progress = tYawn / yawnDuration; // 0 to 1
+                    
+                    // Yawn phases: 
+                    // 0 -> 30% (0s to 1.2s): open mouth wide
+                    // 30% -> 70% (1.2s to 2.8s): hold open and shake/yawn shiver
+                    // 70% -> 100% (2.8s to 4s): close mouth
+                    let yawnOpen = 0;
+                    if (progress < 0.3) {
+                        yawnOpen = progress / 0.3; // 0 to 1
+                    } else if (progress < 0.7) {
+                        yawnOpen = 1.0;
+                    } else {
+                        yawnOpen = 1.0 - (progress - 0.7) / 0.3; // 1 to 0
+                    }
+                    
+                    // Open mouth (negative rotation around X)
+                    const maxOpen = -Math.PI / 4.5;
+                    upperGroup.rotation.x = yawnOpen * maxOpen;
+                    
+                    // Add a shiver/quiver while the mouth is open
+                    if (progress >= 0.2 && progress <= 0.8) {
+                        const shiverIntensity = Math.sin((progress - 0.2) / 0.6 * Math.PI);
+                        upperGroup.rotation.x += Math.sin(now * 0.08) * 0.03 * shiverIntensity;
+                        mesh.rotation.z = Math.sin(now * 0.05) * 0.02 * shiverIntensity;
+                        mesh.rotation.x = Math.cos(now * 0.045) * 0.02 * shiverIntensity;
+                    }
+                } else {
+                    // Regular idle shaking
+                    const cycle = 8000 + (timeOffset % 4000); // 8s to 12s cycle
+                    const t = (now + timeOffset) % cycle;
+                    const shakeDuration = 1500;
+                    
+                    if (t < shakeDuration) {
+                        const progress = t / shakeDuration;
+                        const intensity = Math.sin(progress * Math.PI);
+                        
+                        mesh.rotation.z = Math.sin(now * 0.05) * 0.03 * intensity;
+                        mesh.rotation.x = Math.cos(now * 0.045) * 0.03 * intensity;
+                    }
+                }
+            } else if (state === 'rising') {
+                legs.forEach(leg => {
+                    if (leg) leg.visible = true;
+                });
+                
+                const currentScale = legL1 ? legL1.scale.x : 0.01;
+                const scale = Math.min(1.0, (currentScale + delta * 2.5));
+                legs.forEach((leg, index) => {
+                    if (leg) {
+                        leg.scale.set(scale, scale, scale);
+                        leg.position.y = 0.5 * scale;
+                        
+                        // Reset leg rotation to default spider pose
+                        leg.rotation.x = 0;
+                        const side = (index % 2 === 0) ? 1 : -1;
+                        const upperLeg = leg.children[0];
+                        if (upperLeg) {
+                            upperLeg.rotation.z = side * 0.35;
+                            const lowerLeg = upperLeg.children[0];
+                            if (lowerLeg) {
+                                lowerLeg.rotation.z = -side * 0.9;
+                            }
+                        }
+                    }
+                });
+                
+                mesh.rotation.z = Math.sin(now * 0.05) * 0.05;
+                mesh.rotation.x = Math.cos(now * 0.05) * 0.05;
+            } else if (state === 'chasing' || state === 'wandering') {
+                legs.forEach(leg => {
+                    if (leg) {
+                        leg.visible = true;
+                        leg.scale.set(1.0, 1.0, 1.0);
+                        leg.position.y = 0.5;
+                    }
+                });
+                
+                // Leg walk/bob cycle
+                const speedMult = (state === 'chasing') ? 0.016 : 0.01;
+                
+                // Alternating spider walk cycle
+                const legsList = [
+                    { group: legL1, side: 1, phase: 0 },
+                    { group: legR1, side: -1, phase: Math.PI },
+                    { group: legL2, side: 1, phase: Math.PI },
+                    { group: legR2, side: -1, phase: 0 },
+                    { group: legL3, side: 1, phase: 0 },
+                    { group: legR3, side: -1, phase: Math.PI },
+                    { group: legL4, side: 1, phase: Math.PI },
+                    { group: legR4, side: -1, phase: 0 }
+                ];
+                
+                legsList.forEach(item => {
+                    const leg = item.group;
+                    if (!leg) return;
+                    
+                    const side = item.side;
+                    const phase = item.phase;
+                    
+                    // Swing forward/backward (rotation around X)
+                    leg.rotation.x = Math.sin(now * speedMult + phase) * 0.45;
+                    
+                    // Lift the leg up/down during its swing forward
+                    const lift = Math.max(0, Math.sin(now * speedMult + phase)) * 0.25;
+                    
+                    const upperLeg = leg.children[0];
+                    if (upperLeg) {
+                        upperLeg.rotation.z = side * (0.35 + lift);
+                        const lowerLeg = upperLeg.children[0];
+                        if (lowerLeg) {
+                            // Flex knee when lifting
+                            lowerLeg.rotation.z = -side * (0.9 + lift * 0.5);
+                        }
+                    }
+                });
+                
+                // Bob mouth open slightly while moving (negative X rotation to open mouth)
+                upperGroup.rotation.x = -Math.max(0, Math.sin(now * speedMult * 2) * 0.18);
+                
+                mesh.rotation.x = 0;
+                mesh.rotation.z = 0;
+            } else if (state === 'attacking') {
+                legs.forEach(leg => {
+                    if (leg) {
+                        leg.visible = true;
+                        leg.position.y = 0.5;
+                    }
+                });
+                
+                // Bite animation: roof tilts open and snaps shut
+                const openAngle = Math.sin(attackAnimProgress * Math.PI) * (-Math.PI / 2.5); // open up to ~72 degrees
+                upperGroup.rotation.x = openAngle;
+                
+                mesh.rotation.x = Math.sin(attackAnimProgress * Math.PI) * 0.25; // tilt forward
+            } else if (state === 'burrowing') {
+                legs.forEach(leg => {
+                    if (leg) leg.visible = true;
+                });
+                
+                const currentScale = legL1 ? legL1.scale.x : 1.0;
+                const scale = Math.max(0.01, (currentScale - delta * 2.5));
+                legs.forEach((leg, index) => {
+                    if (leg) {
+                        leg.scale.set(scale, scale, scale);
+                        leg.position.y = 0.5 * scale;
+                        
+                        // Curl legs slightly as they retract/burrow
+                        const side = (index % 2 === 0) ? 1 : -1;
+                        const upperLeg = leg.children[0];
+                        if (upperLeg) {
+                            upperLeg.rotation.z = side * (0.35 - (1 - scale) * 0.25);
+                            const lowerLeg = upperLeg.children[0];
+                            if (lowerLeg) {
+                                lowerLeg.rotation.z = -side * (0.9 + (1 - scale) * 0.3);
+                            }
+                        }
+                    }
+                });
+                
+                upperGroup.rotation.x = upperGroup.rotation.x * 0.8;
+                
+                mesh.rotation.z = Math.sin(now * 0.05) * 0.05;
+                mesh.rotation.x = Math.cos(now * 0.05) * 0.05;
+            } else if (state === 'dead') {
+                const progress = attackAnimProgress; // 0 to 1
+                mesh.rotation.z = progress * (Math.PI / 2.5); // tilt sideways
+                upperGroup.rotation.x = progress * (-Math.PI / 6); // mouth slightly ajar
+                
+                legs.forEach(leg => {
+                    if (leg) leg.visible = false;
+                });
+            }
+        }
+
+        function animateStrongholdGuardMesh(mesh, state, attackAnimProgress, delta, now) {
+            const { torso, head, armL, armR, legL, legR, shield, spearGroup, swordGroup } = mesh.userData;
+            if (!torso) return;
+            
+            // 1. Reset all positions, rotations, and scales of the guard's parts to standing defaults
+            torso.position.set(0, 0.95, 0);
+            torso.rotation.set(0, 0, 0);
+            
+            head.position.set(0, 1.7, 0);
+            head.rotation.set(0, 0, 0);
+            
+            armL.position.set(-0.38, 1.1, 0);
+            armL.rotation.set(0, 0, 0);
+            
+            armR.position.set(0.38, 1.1, 0);
+            armR.rotation.set(0, 0, 0);
+            
+            legL.position.set(-0.18, 0.35, 0);
+            legL.rotation.set(0, 0, 0);
+            
+            legR.position.set(0.18, 0.35, 0);
+            legR.rotation.set(0, 0, 0);
+            
+            // Shield is placed relative to left arm
+            shield.position.set(-0.15, -0.1, 0.1);
+            shield.rotation.set(0, -Math.PI / 2.2, 0);
+            shield.scale.set(1, 1, 1);
+            
+            spearGroup.position.set(0.1, -0.2, 0.15);
+            spearGroup.rotation.set(0, 0, 0);
+            spearGroup.scale.set(1, 1, 1);
+            
+            if (swordGroup) {
+                swordGroup.position.set(0.1, -0.2, 0.15);
+                swordGroup.rotation.set(0, 0, 0);
+                swordGroup.scale.set(1, 1, 1);
+            }
+            
+            // Determine active weapon & switch progress
+            let activeWeapon = 'spear';
+            let switchProgress = 0;
+            
+            if (state === 'charging') {
+                activeWeapon = 'sword';
+                // attackAnimProgress is used to animate the weapon switch during the initial charge phase!
+                switchProgress = attackAnimProgress;
+            } else if (state === 'slashing') {
+                activeWeapon = 'sword';
+                switchProgress = 1.0;
+            } else {
+                activeWeapon = 'spear';
+                switchProgress = 0;
+            }
+            
+            // Apply weapon visibility & switch animations
+            if (spearGroup && swordGroup) {
+                if (activeWeapon === 'spear') {
+                    spearGroup.visible = true;
+                    swordGroup.visible = false;
+                    spearGroup.scale.set(1, 1, 1);
+                    swordGroup.scale.set(0.001, 0.001, 0.001);
+                } else if (activeWeapon === 'sword') {
+                    // Switch spear to sword animation
+                    // switchProgress goes from 0 to 1
+                    if (switchProgress < 0.5) {
+                        // Phase 1: Putting spear away
+                        const t = switchProgress * 2; // 0 to 1
+                        spearGroup.visible = true;
+                        swordGroup.visible = false;
+                        
+                        // Spear rotates onto the back
+                        spearGroup.rotation.x = t * (Math.PI / 1.5);
+                        spearGroup.position.set(0.1 - t * 0.3, -0.2 - t * 0.4, 0.15 - t * 0.5);
+                        spearGroup.scale.set(1 - t * 0.999, 1 - t * 0.999, 1 - t * 0.999);
+                        
+                        // Arm moves to the back / left hip
+                        armR.rotation.x = -t * (Math.PI / 1.2);
+                        armR.rotation.y = -t * (Math.PI / 4);
+                    } else {
+                        // Phase 2: Drawing the sword from left hip
+                        const t = (switchProgress - 0.5) * 2; // 0 to 1
+                        spearGroup.visible = false;
+                        swordGroup.visible = true;
+                        spearGroup.scale.set(0.001, 0.001, 0.001);
+                        
+                        // Sword is drawn and scaled up
+                        swordGroup.scale.set(t, t, t);
+                        
+                        // Arm sweeps from left hip to forward/ready position
+                        armR.rotation.x = -(Math.PI / 1.2) + t * (Math.PI / 1.2 - Math.PI / 3);
+                        armR.rotation.y = -(Math.PI / 4) + t * (Math.PI / 4 - Math.PI / 6);
+                    }
+                }
+            }
+            
+            // Now apply the main states
+            if (state === 'standing') {
+                // Raise and bend left arm forward/outward to hold the shield like the guy in the picture
+                armL.rotation.x = -Math.PI / 4;
+                armL.rotation.y = -Math.PI / 8;
+                armL.rotation.z = 0;
+                
+                // Position shield on the left side of arm
+                shield.position.set(-0.15, -0.1, 0.1);
+                shield.rotation.set(0, -Math.PI / 2.2, 0);
+                
+                armR.rotation.x = -Math.PI / 12;
+                armR.rotation.y = 0;
+                armR.rotation.z = 0;
+                spearGroup.rotation.x = Math.PI / 12;
+                spearGroup.position.set(0.1, -0.2, 0.15);
+
+                if (mesh.userData.isWalking) {
+                    const swing = Math.sin(now * 0.015) * 0.4;
+                    legL.rotation.x = swing;
+                    legR.rotation.x = -swing;
+                }
+            } else if (state === 'crouching') {
+                // Crouching stance: deep lean, wide legs
+                torso.position.y = 0.68;
+                torso.position.z = 0.15;
+                torso.rotation.x = 0.65; // deep forward lean
+                
+                head.position.y = 1.35;
+                head.position.z = 0.45;
+                head.rotation.x = -0.55; // look forward
+                
+                legL.rotation.x = -0.6;
+                legL.position.y = 0.28;
+                legL.position.z = 0.2;
+                
+                legR.rotation.x = 0.6;
+                legR.position.y = 0.28;
+                legR.position.z = -0.2;
+                
+                // Left arm holds shield defensively centered
+                armL.position.y = 0.8;
+                armL.position.z = 0.35;
+                armL.rotation.set(-Math.PI / 6, Math.PI / 6, 0);
+                
+                // Position shield to block in front
+                shield.position.set(0.05, -0.1, 0.2);
+                shield.rotation.set(0, -Math.PI / 6, 0);
+                
+                // Right arm holds spear pointing straight forward
+                armR.position.set(0.38, 0.9, -0.1);
+                armR.rotation.set(-Math.PI / 2, -Math.PI / 12, 0);
+                spearGroup.rotation.set(0, 0, 0);
+                spearGroup.position.set(0.05, -0.2, 0.15);
+            } else if (state === 'jabbing') {
+                // Jabbing stance (spear thrust)
+                torso.position.y = 0.68;
+                torso.position.z = 0.15;
+                torso.rotation.x = 0.65;
+                
+                head.position.y = 1.35;
+                head.position.z = 0.45;
+                head.rotation.x = -0.55;
+                
+                legL.rotation.x = -0.6;
+                legL.position.y = 0.28;
+                legL.position.z = 0.2;
+                
+                legR.rotation.x = 0.6;
+                legR.position.y = 0.28;
+                legR.position.z = -0.2;
+                
+                // Left arm pulls shield back/down (not blocking, vulnerable)
+                armL.position.y = 0.7;
+                armL.position.z = 0.2;
+                armL.rotation.set(0.2, -Math.PI / 3, -Math.PI / 4);
+                shield.position.set(-0.15, -0.1, 0.1);
+                shield.rotation.set(0, -Math.PI / 2.2, 0);
+                
+                // Spear thrusts forward dynamically
+                const thrustDist = Math.sin(attackAnimProgress * Math.PI) * 1.1; // pronounced thrust!
+                
+                armR.position.set(0.38, 0.9, -0.1 + thrustDist * 0.4);
+                armR.rotation.set(-Math.PI / 2, -Math.PI / 12, 0);
+                spearGroup.rotation.set(0, 0, 0);
+                spearGroup.position.set(0.05, -0.2 + thrustDist * 1.0, 0.15);
+            } else if (state === 'charging') {
+                // Charging stance (chasing player with sword drawn)
+                // Slightly forward lean, running legs, sword held in front/ready
+                torso.position.y = 0.85;
+                torso.rotation.x = 0.3; // leaning forward
+                
+                head.rotation.x = -0.2;
+                
+                // Running leg swing
+                const swing = Math.sin(now * 0.015) * 0.65;
+                legL.rotation.x = swing;
+                legR.rotation.x = -swing;
+                
+                // Left arm holds shield tucked to the side (charging is aggressive, less defensive)
+                armL.rotation.set(-Math.PI / 6, Math.PI / 4, 0);
+                shield.position.set(-0.15, -0.1, 0.1);
+                shield.rotation.set(0, -Math.PI / 2.2, 0);
+                
+                // Right arm hold sword ready - handled by switchProgress in Phase 2 if finished
+                if (switchProgress >= 1.0) {
+                    armR.position.set(0.38, 1.0, 0.1);
+                    armR.rotation.set(-Math.PI / 3, -Math.PI / 6, 0);
+                    if (swordGroup) {
+                        swordGroup.scale.set(1, 1, 1);
+                    }
+                }
+            } else if (state === 'slashing') {
+                // Slashing stance (sword swing)
+                torso.position.y = 0.85;
+                
+                const swing = attackAnimProgress;
+                
+                // Rotate torso with the swing
+                torso.rotation.y = Math.sin(swing * Math.PI) * 0.4;
+                
+                // Legs stable during slash
+                legL.rotation.x = -0.2;
+                legR.rotation.x = 0.2;
+                
+                // Left arm pulls shield back/down (exposed)
+                armL.rotation.set(0.2, -Math.PI / 3, -Math.PI / 4);
+                shield.position.set(-0.15, -0.1, 0.1);
+                shield.rotation.set(0, -Math.PI / 2.2, 0);
+                
+                // Right arm sweeps sword across
+                armR.position.set(0.38, 1.1, 0);
+                armR.rotation.x = -Math.PI / 2 - Math.sin(swing * Math.PI) * 1.2;
+                armR.rotation.y = -Math.PI / 6 + swing * Math.PI * 0.8;
+                
+                if (swordGroup) {
+                    swordGroup.scale.set(1, 1, 1);
+                }
+            } else if (state === 'dead') {
+                const t = attackAnimProgress; // slumpProgress, 0 to 1
+                
+                const lerp = (start, end, alpha) => start + (end - start) * alpha;
+                
+                torso.position.set(
+                    lerp(0, 0, t),
+                    lerp(0.95, 0.15, t),
+                    lerp(0, -0.2, t)
+                );
+                torso.rotation.set(
+                    lerp(0, Math.PI / 2, t),
+                    0,
+                    0
+                );
+                
+                head.position.set(
+                    0,
+                    lerp(1.7, 0.2, t),
+                    lerp(0, -0.95, t)
+                );
+                head.rotation.set(
+                    0,
+                    lerp(0, 0.3, t),
+                    lerp(0, 0.1, t)
+                );
+                
+                legL.position.set(
+                    -0.18,
+                    lerp(0.35, 0.07, t),
+                    lerp(0, 0.7, t)
+                );
+                legL.rotation.set(
+                    lerp(0, Math.PI / 2, t),
+                    0,
+                    lerp(0, -0.1, t)
+                );
+                
+                legR.position.set(
+                    0.18,
+                    lerp(0.35, 0.07, t),
+                    lerp(0, 0.7, t)
+                );
+                legR.rotation.set(
+                    lerp(0, Math.PI / 2, t),
+                    0,
+                    lerp(0, 0.1, t)
+                );
+                
+                armL.position.set(
+                    lerp(-0.38, -0.45, t),
+                    lerp(1.1, 0.07, t),
+                    lerp(0, -0.3, t)
+                );
+                armL.rotation.set(
+                    lerp(0, Math.PI / 2, t),
+                    0,
+                    lerp(0, -0.3, t)
+                );
+                
+                armR.position.set(
+                    lerp(0.38, 0.45, t),
+                    lerp(1.1, 0.07, t),
+                    lerp(0, -0.3, t)
+                );
+                armR.rotation.set(
+                    lerp(0, Math.PI / 2, t),
+                    0,
+                    lerp(0, 0.3, t)
+                );
+                
+                shield.position.set(
+                    lerp(-0.15, -0.35, t),
+                    lerp(-0.1, -0.3, t),
+                    lerp(0.1, -0.05, t)
+                );
+                shield.rotation.set(
+                    lerp(0, 0, t),
+                    lerp(-Math.PI / 2.2, -0.1, t),
+                    lerp(0, 0.5, t)
+                );
+                
+                // Hide sword, show spear
+                if (swordGroup) {
+                    swordGroup.visible = t < 0.5; // hide sword gradually or halfway
+                    const swScale = lerp(1, 0.001, t);
+                    swordGroup.scale.set(swScale, swScale, swScale);
+                }
+                
+                spearGroup.visible = true;
+                spearGroup.scale.set(1, 1, 1);
+                
+                spearGroup.position.set(
+                    lerp(0.1, 0.35, t),
+                    lerp(-0.2, -0.8, t),
+                    lerp(0.15, -0.05, t)
+                );
+                spearGroup.rotation.set(
+                    lerp(0, Math.PI, t),
+                    0,
+                    lerp(0, -0.2, t)
+                );
+            }
+        }
+
         function spawnDirtParticles(position, count = 12) {
             for (let i = 0; i < count; i++) {
                 const size = 0.08 + Math.random() * 0.15;
@@ -16414,6 +18039,7 @@ export function initNeonBruiser(): Cleanup {
 
         function makeMimicMushroomFlee(z, attackerX, attackerZ, kx, kz) {
             if (z.type !== 'mimic_mushroom') return;
+            if (z.wakeUpTime && (Date.now() + timeOffset) < z.wakeUpTime) return;
             
             z.isFleeing = true;
             z.isWandering = true;
@@ -16486,6 +18112,29 @@ export function initNeonBruiser(): Cleanup {
         function updateMimic(z, delta, now) {
             z.mesh.visible = (isDimensionCave(z.inCave) === isDimensionCave(playerInCave));
             
+            // If the mimic is settled/sleeping, keep it in settled state until wake up time
+            if (z.wakeUpTime && (Date.now() + timeOffset) < z.wakeUpTime) {
+                z.state = 'settled';
+                z.isWandering = false;
+                z.isFleeing = false;
+                z.attackAnimProgress = 0;
+                
+                z.x = z.mesh.position.x;
+                z.y = z.mesh.position.y;
+                z.z = z.mesh.position.z;
+                
+                z.mesh.position.y = getTerrainHeight(z.mesh.position.x, z.mesh.position.z, false);
+                z.mesh.rotation.set(0, 0, 0);
+                
+                animateCrawlingTreeMesh(z.mesh, 'settled', 0, delta, now);
+                return;
+            } else if (z.state === 'settled') {
+                z.state = 'standing';
+                z.stateTime = 0;
+                z.wakeUpTime = null;
+                z.nextWanderTime = now + (25000 + Math.random() * 45000);
+            }
+            
             // Apply knockback velocities
             z.kx = 0;
             z.kz = 0;
@@ -16498,7 +18147,8 @@ export function initNeonBruiser(): Cleanup {
             let targetType = 'host';
             let minDist = Infinity;
             
-            const canTargetHost = myHealth > 0 && !inBush;
+            const isJoseph = (myAppearance.name || '').toLowerCase().includes('joseph');
+            const canTargetHost = myHealth > 0 && (!inBush || isJoseph);
             if (canTargetHost) {
                 minDist = Math.sqrt(Math.pow(z.mesh.position.x - px, 2) + Math.pow(z.mesh.position.z - pz, 2));
             }
@@ -16518,7 +18168,7 @@ export function initNeonBruiser(): Cleanup {
             z.stateTime += delta;
             
             if (z.state === 'standing') {
-                if (z.type === 'crawling_tree' && minDist < 8.0) {
+                if ((z.type === 'crawling_tree' || (isJoseph && z.type === 'mimic_mushroom')) && minDist < 8.0) {
                     z.state = 'rising';
                     z.stateTime = 0;
                     z.isWandering = false;
@@ -16601,8 +18251,8 @@ export function initNeonBruiser(): Cleanup {
                     }
                 }
                 
-                // Attack range check (2.5 meters) - tree mimics only
-                if (z.type === 'crawling_tree' && dist < 2.5 && now - z.lastAttackTime > 1500 && minDist !== Infinity) {
+                // Attack range check (2.5 meters) - tree mimics only (plus mimic mushrooms in Joseph mode)
+                if ((z.type === 'crawling_tree' || (isJoseph && z.type === 'mimic_mushroom')) && dist < 2.5 && now - z.lastAttackTime > 1500 && minDist !== Infinity) {
                     z.state = 'attacking';
                     z.stateTime = 0;
                     z.attackAnimProgress = 0;
@@ -16616,14 +18266,14 @@ export function initNeonBruiser(): Cleanup {
                     const kzNorm = kLen > 0 ? (kz / kLen) * force : 0;
                     
                     if (targetType === 'host') {
-                        takeDamage(23, kxNorm, kzNorm, "Smacked by a Crawling Tree!");
+                        takeDamage(isJoseph ? 15 : 23, kxNorm, kzNorm, z.type === 'mimic_mushroom' ? "Killed by a Mimic Mushroom!" : "Smacked by a Crawling Tree!");
                     } else if (targetType === 'client') {
                         sendNetworkMessage({
                             type: 'zombie-hit',
-                            damage: 23,
+                            damage: isJoseph ? 15 : 23,
                             kx: kxNorm,
                             kz: kzNorm,
-                            reason: "Smacked by a Crawling Tree!"
+                            reason: z.type === 'mimic_mushroom' ? "Killed by a Mimic Mushroom!" : "Smacked by a Crawling Tree!"
                         });
                     }
                 }
@@ -16645,7 +18295,7 @@ export function initNeonBruiser(): Cleanup {
                 
                 // Player detection (range 20 coordinates)
                 if (minDist < 20.0) {
-                    if (z.type === 'crawling_tree') {
+                    if (z.type === 'crawling_tree' || (isJoseph && z.type === 'mimic_mushroom')) {
                         // Aggressive: attack/chase
                         z.state = 'chasing';
                         z.isWandering = false;
@@ -16757,6 +18407,234 @@ export function initNeonBruiser(): Cleanup {
             z.z = z.mesh.position.z;
             
             animateCrawlingTreeMesh(z.mesh, z.state, z.attackAnimProgress, delta, now);
+        }
+
+        function updateHouseMimic(z, delta, now) {
+            z.mesh.visible = (isDimensionCave(z.inCave) === isDimensionCave(playerInCave));
+            
+            if (z.isDead) {
+                if (z.deathTime === undefined) z.deathTime = 0;
+                z.deathTime += delta;
+                
+                z.state = 'dead';
+                z.attackAnimProgress = Math.min(1.0, z.deathTime / 0.8);
+                z.mesh.rotation.x = 0;
+                z.mesh.position.y = getTerrainHeight(z.mesh.position.x, z.mesh.position.z, z.inCave);
+                
+                animateHouseMimicMesh(z.mesh, 'dead', z.attackAnimProgress, delta, now);
+                return;
+            }
+
+            // Apply knockback velocities
+            if (z.kx || z.kz) {
+                z.mesh.position.x += z.kx * delta;
+                z.mesh.position.z += z.kz * delta;
+                z.mesh.position.y = getTerrainHeight(z.mesh.position.x, z.mesh.position.z, z.inCave);
+                
+                z.kx -= z.kx * 4.5 * delta;
+                z.kz -= z.kz * 4.5 * delta;
+                if (Math.abs(z.kx) < 0.05) z.kx = 0;
+                if (Math.abs(z.kz) < 0.05) z.kz = 0;
+            }
+
+            const px = camera.position.x;
+            const pz = camera.position.z;
+            
+            let targetX = px;
+            let targetZ = pz;
+            let targetType = 'host';
+            let minDist = Infinity;
+            
+            const isJoseph = (myAppearance.name || '').toLowerCase().includes('joseph');
+            const canTargetHost = myHealth > 0 && !inBush;
+            if (canTargetHost) {
+                minDist = Math.sqrt(Math.pow(z.mesh.position.x - px, 2) + Math.pow(z.mesh.position.z - pz, 2));
+            }
+            
+            if (opponentGroup && oppHealth > 0 && isConnected && !opponentInvisible && !opponentInCave) {
+                const ox = opponentGroup.position.x;
+                const oz = opponentGroup.position.z;
+                const distToClient = Math.sqrt(Math.pow(z.mesh.position.x - ox, 2) + Math.pow(z.mesh.position.z - oz, 2));
+                if (distToClient < minDist) {
+                    minDist = distToClient;
+                    targetX = ox;
+                    targetZ = oz;
+                    targetType = 'client';
+                }
+            }
+            
+            z.stateTime = (z.stateTime || 0) + delta;
+            
+            const isAggressive = z.isHostile || isJoseph;
+            
+            if (z.state === 'standing') {
+                if (isAggressive && minDist < 15.0) {
+                    z.state = 'rising';
+                    z.stateTime = 0;
+                    z.isWandering = false;
+                } else if (now >= (z.nextWanderTime || 0)) {
+                    z.state = 'rising';
+                    z.stateTime = 0;
+                    z.isWandering = true;
+                    
+                    let foundWanderTarget = false;
+                    for (let attempts = 0; attempts < 15; attempts++) {
+                        const angle = Math.random() * Math.PI * 2;
+                        const r = 5 + Math.random() * 12;
+                        const tx = z.startX + Math.cos(angle) * r;
+                        const tz = z.startZ + Math.sin(angle) * r;
+                        const ty = getTerrainHeight(tx, tz, false);
+                        if (ty > WATER_Y) {
+                            z.wanderTargetX = tx;
+                            z.wanderTargetZ = tz;
+                            foundWanderTarget = true;
+                            break;
+                        }
+                    }
+                    if (!foundWanderTarget) {
+                        z.wanderTargetX = z.startX;
+                        z.wanderTargetZ = z.startZ;
+                    }
+                }
+            } else if (z.state === 'rising') {
+                if (z.stateTime >= 0.8) {
+                    if (z.isWandering) {
+                        z.state = 'wandering';
+                    } else {
+                        z.state = 'chasing';
+                        z.chaseDuration = 12.0 + Math.random() * 8.0;
+                    }
+                    z.stateTime = 0;
+                }
+            } else if (z.state === 'chasing') {
+                if (!isAggressive || minDist === Infinity) {
+                    z.state = 'burrowing';
+                    z.stateTime = 0;
+                } else {
+                    const dx = targetX - z.mesh.position.x;
+                    const dz = targetZ - z.mesh.position.z;
+                    const dist = Math.sqrt(dx * dx + dz * dz);
+                    
+                    if (dist > 0.1) {
+                        const speed = 4.2;
+                        const vx = (dx / dist) * speed;
+                        const vz = (dz / dist) * speed;
+                        
+                        const nextX = z.mesh.position.x + vx * delta;
+                        const nextZ = z.mesh.position.z + vz * delta;
+                        const nextY = getTerrainHeight(nextX, nextZ, false);
+                        
+                        if (nextY <= WATER_Y) {
+                            z.state = 'burrowing';
+                            z.stateTime = 0;
+                        } else {
+                            z.mesh.position.x = nextX;
+                            z.mesh.position.z = nextZ;
+                            z.mesh.position.y = nextY;
+                            
+                            z.ry = Math.atan2(dx, dz);
+                            z.mesh.rotation.y = z.ry;
+                        }
+                    }
+                    
+                    if (dist < 4.5 && now - z.lastAttackTime > 2000) {
+                        z.state = 'attacking';
+                        z.stateTime = 0;
+                        z.attackAnimProgress = 0;
+                        z.lastAttackTime = now;
+                        
+                        const kx = (targetX - z.mesh.position.x);
+                        const kz = (targetZ - z.mesh.position.z);
+                        const kLen = Math.sqrt(kx * kx + kz * kz);
+                        const force = 15.0;
+                        const kxNorm = kLen > 0 ? (kx / kLen) * force : 0;
+                        const kzNorm = kLen > 0 ? (kz / kLen) * force : 0;
+                        
+                        if (targetType === 'host') {
+                            takeDamage(100, kxNorm, kzNorm, "Eaten alive by a House Mimic!");
+                        } else if (targetType === 'client') {
+                            sendNetworkMessage({
+                                type: 'zombie-hit',
+                                damage: 100,
+                                kx: kxNorm,
+                                kz: kzNorm,
+                                reason: "Eaten alive by a House Mimic!"
+                            });
+                        }
+                    }
+                    
+                    if (z.stateTime >= z.chaseDuration) {
+                        z.state = 'burrowing';
+                        z.stateTime = 0;
+                    }
+                }
+            } else if (z.state === 'wandering') {
+                if (isAggressive && minDist < 15.0) {
+                    z.state = 'chasing';
+                    z.isWandering = false;
+                    z.stateTime = 0;
+                    z.chaseDuration = 15.0;
+                } else {
+                    let tx = z.wanderTargetX;
+                    let tz = z.wanderTargetZ;
+                    let speed = 1.8;
+                    
+                    const dx = tx - z.mesh.position.x;
+                    const dz = tz - z.mesh.position.z;
+                    const dist = Math.sqrt(dx * dx + dz * dz);
+                    
+                    if (dist > 0.3) {
+                        const vx = (dx / dist) * speed;
+                        const vz = (dz / dist) * speed;
+                        
+                        const nextX = z.mesh.position.x + vx * delta;
+                        const nextZ = z.mesh.position.z + vz * delta;
+                        const nextY = getTerrainHeight(nextX, nextZ, false);
+                        
+                        if (nextY <= WATER_Y) {
+                            z.state = 'burrowing';
+                            z.stateTime = 0;
+                        } else {
+                            z.mesh.position.x = nextX;
+                            z.mesh.position.z = nextZ;
+                            z.mesh.position.y = nextY;
+                            
+                            z.ry = Math.atan2(dx, dz);
+                            z.mesh.rotation.y = z.ry;
+                        }
+                    } else {
+                        z.state = 'burrowing';
+                        z.stateTime = 0;
+                    }
+                }
+            } else if (z.state === 'attacking') {
+                z.attackAnimProgress += delta * 2.0;
+                if (z.attackAnimProgress >= 1.0) {
+                    z.state = 'chasing';
+                    z.stateTime = 0;
+                    z.attackAnimProgress = 0;
+                }
+            } else if (z.state === 'burrowing') {
+                z.mesh.position.y = getTerrainHeight(z.mesh.position.x, z.mesh.position.z, false);
+                
+                if (z.stateTime >= 0.8) {
+                    z.startX = z.mesh.position.x;
+                    z.startY = z.mesh.position.y;
+                    z.startZ = z.mesh.position.z;
+                    z.mesh.rotation.set(0, 0, 0);
+                    z.ry = 0;
+                    z.state = 'standing';
+                    z.stateTime = 0;
+                    z.isWandering = false;
+                    z.nextWanderTime = now + (15000 + Math.random() * 25000);
+                }
+            }
+            
+            z.x = z.mesh.position.x;
+            z.y = z.mesh.position.y;
+            z.z = z.mesh.position.z;
+            
+            animateHouseMimicMesh(z.mesh, z.state, z.attackAnimProgress, delta, now);
         }
 
         // --- ZOMBIES SECTION ---
@@ -17033,6 +18911,163 @@ export function initNeonBruiser(): Cleanup {
             return group;
         }
 
+        function createStrongholdGuardMesh() {
+            const group = new THREE.Group();
+            group.zombieType = 'stronghold_guard';
+            
+            const whiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 });
+            
+            const torso = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.1, 0.3), whiteMat);
+            torso.position.y = 0.95;
+            torso.castShadow = true;
+            group.add(torso);
+            
+            const head = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), whiteMat);
+            head.position.y = 1.7;
+            head.castShadow = true;
+            group.add(head);
+            
+            const armL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.7, 0.14), whiteMat);
+            armL.position.set(-0.38, 1.1, 0);
+            armL.castShadow = true;
+            group.add(armL);
+            
+            const armR = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.7, 0.14), whiteMat);
+            armR.position.set(0.38, 1.1, 0);
+            armR.castShadow = true;
+            group.add(armR);
+            
+            const legL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.7, 0.14), whiteMat);
+            legL.position.set(-0.18, 0.35, 0);
+            legL.castShadow = true;
+            group.add(legL);
+            
+            const legR = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.7, 0.14), whiteMat);
+            legR.position.set(0.18, 0.35, 0);
+            legR.castShadow = true;
+            group.add(legR);
+            
+            // Create a premium heater shield (bigger and beautiful like in the reference image)
+            const shield = new THREE.Group();
+            
+            // Border/base (steel/silver)
+            const borderShape = new THREE.Shape();
+            borderShape.moveTo(0, 0.65);
+            borderShape.lineTo(0.45, 0.65);
+            borderShape.bezierCurveTo(0.45, 0.1, 0.35, -0.4, 0, -0.65);
+            borderShape.bezierCurveTo(-0.35, -0.4, -0.45, 0.1, -0.45, 0.65);
+            borderShape.lineTo(0, 0.65);
+
+            const borderGeo = new THREE.ExtrudeGeometry(borderShape, {
+                depth: 0.05,
+                bevelEnabled: true,
+                bevelSegments: 3,
+                steps: 1,
+                bevelSize: 0.015,
+                bevelThickness: 0.015
+            });
+            const steelMat = new THREE.MeshStandardMaterial({ color: 0x99abb3, metalness: 0.85, roughness: 0.25 });
+            const borderMesh = new THREE.Mesh(borderGeo, steelMat);
+            borderMesh.castShadow = true;
+            borderMesh.position.z = -0.025; // center on Z
+            shield.add(borderMesh);
+
+            // Inner face (rich royal blue as in the reference image)
+            const innerShape = new THREE.Shape();
+            innerShape.moveTo(0, 0.61);
+            innerShape.lineTo(0.41, 0.61);
+            innerShape.bezierCurveTo(0.41, 0.1, 0.31, -0.36, 0, -0.61);
+            innerShape.bezierCurveTo(-0.31, -0.36, -0.41, 0.1, -0.41, 0.61);
+            innerShape.lineTo(0, 0.61);
+
+            const innerGeo = new THREE.ExtrudeGeometry(innerShape, {
+                depth: 0.02,
+                bevelEnabled: false
+            });
+            const blueMat = new THREE.MeshStandardMaterial({ color: 0x1f3c73, roughness: 0.5 });
+            const innerMesh = new THREE.Mesh(innerGeo, blueMat);
+            innerMesh.castShadow = true;
+            innerMesh.position.z = 0.03;
+            shield.add(innerMesh);
+
+            // Golden emblem
+            const goldMat = new THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.8, roughness: 0.2 });
+            const emblemVertical = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.7, 0.01), goldMat);
+            emblemVertical.position.set(0, 0.05, 0.04);
+            shield.add(emblemVertical);
+
+            const emblemHorizontal = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.08, 0.01), goldMat);
+            emblemHorizontal.position.set(0, 0.22, 0.04);
+            shield.add(emblemHorizontal);
+
+            shield.position.set(-0.15, -0.1, 0.1);
+            shield.rotation.set(0, -Math.PI / 2.2, 0);
+            armL.add(shield);
+            
+            const spearGroup = new THREE.Group();
+            const shaftMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.9 });
+            const tipMat = new THREE.MeshStandardMaterial({ color: 0xe6e6e6, metalness: 0.8, roughness: 0.2 });
+            
+            // Longer pike shaft (3.2m instead of 2.2m)
+            const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 3.2, 8), shaftMat);
+            shaft.castShadow = true;
+            spearGroup.add(shaft);
+            
+            const tip = new THREE.Mesh(new THREE.ConeGeometry(0.065, 0.45, 8), tipMat);
+            tip.position.y = 1.6 + 0.225; // 3.2/2 + 0.45/2
+            tip.castShadow = true;
+            spearGroup.add(tip);
+            
+            spearGroup.position.set(0.1, -0.2, 0.15);
+            armR.add(spearGroup);
+            
+            // Create a premium sword group
+            const swordGroup = new THREE.Group();
+            const hiltMat = new THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.8, roughness: 0.2 }); // Gold
+            const gripMat = new THREE.MeshStandardMaterial({ color: 0x5c4033, roughness: 0.8 }); // Leather grip
+            const bladeMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.9, roughness: 0.1 }); // Steel
+            
+            // Grip (aligned vertically to stick together)
+            const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.25, 8), gripMat);
+            swordGroup.add(grip);
+            
+            // Crossguard
+            const guardMesh = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.04, 0.04), hiltMat);
+            guardMesh.position.y = 0.125;
+            swordGroup.add(guardMesh);
+            
+            // Blade
+            const blade = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.8, 0.015), bladeMat);
+            blade.position.y = 0.125 + 0.4;
+            blade.castShadow = true;
+            swordGroup.add(blade);
+            
+            // Pommel
+            const pommel = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 8), hiltMat);
+            pommel.position.y = -0.125;
+            swordGroup.add(pommel);
+            
+            // Add swordGroup to armR
+            swordGroup.position.set(0.1, -0.2, 0.15);
+            swordGroup.rotation.set(0, 0, 0);
+            armR.add(swordGroup);
+            
+            group.userData = {
+                torso,
+                head,
+                armL,
+                armR,
+                legL,
+                legR,
+                shield,
+                spearGroup,
+                swordGroup,
+                type: 'stronghold_guard'
+            };
+            
+            return group;
+        }
+
         function createBeeMesh() {
             const group = new THREE.Group();
             
@@ -17212,14 +19247,14 @@ export function initNeonBruiser(): Cleanup {
 
         function clearZombies(forceAll = false) {
             for (let i = zombies.length - 1; i >= 0; i--) {
-                if (forceAll || (zombies[i].type !== 'crawling_tree' && zombies[i].type !== 'mimic_mushroom')) {
+                if (forceAll || (zombies[i].type !== 'crawling_tree' && zombies[i].type !== 'mimic_mushroom' && zombies[i].type !== 'stronghold_guard' && zombies[i].type !== 'house_mimic')) {
                     scene.remove(zombies[i].mesh);
                     zombies.splice(i, 1);
                 }
             }
             
             clientZombies.forEach((mesh, id) => {
-                if (forceAll || (mesh.zombieType !== 'crawling_tree' && mesh.zombieType !== 'mimic_mushroom')) {
+                if (forceAll || (mesh.zombieType !== 'crawling_tree' && mesh.zombieType !== 'mimic_mushroom' && mesh.zombieType !== 'stronghold_guard' && mesh.zombieType !== 'house_mimic')) {
                     scene.remove(mesh);
                 }
             });
@@ -17227,7 +19262,7 @@ export function initNeonBruiser(): Cleanup {
                 clientZombies.clear();
             } else {
                 for (let [id, mesh] of clientZombies) {
-                    if (mesh.zombieType !== 'crawling_tree' && mesh.zombieType !== 'mimic_mushroom') {
+                    if (mesh.zombieType !== 'crawling_tree' && mesh.zombieType !== 'mimic_mushroom' && mesh.zombieType !== 'stronghold_guard' && mesh.zombieType !== 'house_mimic') {
                         clientZombies.delete(id);
                     }
                 }
@@ -17238,13 +19273,334 @@ export function initNeonBruiser(): Cleanup {
             }
         }
 
+        function spawnStrongholdGuards() {
+            if (!isHost) return;
+            
+            const guardsData = [
+                { id: 'stronghold_guard_1', x: 517.5, z: 940, levelY: undefined },
+                { id: 'stronghold_guard_2', x: 522.5, z: 940, levelY: undefined },
+                { id: 'stronghold_guard_lvl2_1', x: 516.5, z: 926.5, levelY: strongholdBaseY + 4.0 },
+                { id: 'stronghold_guard_lvl2_2', x: 520.5, z: 934.5, levelY: strongholdBaseY + 4.0 },
+                { id: 'stronghold_guard_lvl3_1', x: 523.5, z: 926.5, levelY: strongholdBaseY + 8.0 },
+                { id: 'stronghold_guard_lvl3_2', x: 520.5, z: 934.5, levelY: strongholdBaseY + 8.0 }
+            ];
+            
+            guardsData.forEach(gd => {
+                if (zombies.some(z => z.id === gd.id)) return;
+                
+                const gy = gd.levelY !== undefined ? gd.levelY : getTerrainHeight(gd.x, gd.z, false);
+                const mesh = createStrongholdGuardMesh();
+                mesh.position.set(gd.x, gy, gd.z);
+                scene.add(mesh);
+                
+                zombies.push({
+                    id: gd.id,
+                    mesh: mesh,
+                    type: 'stronghold_guard',
+                    x: gd.x,
+                    y: gy,
+                    z: gd.z,
+                    ry: 0,
+                    lastAttackTime: 0,
+                    isAttacking: false,
+                    attackAnimTime: 0,
+                    health: 150,
+                    maxHealth: 150,
+                    burnTime: 0,
+                    kx: 0,
+                    kz: 0,
+                    isDead: false,
+                    deathTime: 0,
+                    state: 'standing',
+                    attackAnimProgress: 0,
+                    inCave: false,
+                    levelY: gd.levelY
+                });
+            });
+        }
+
+        function isInsideStronghold(x, y, z) {
+            const baseY = (typeof strongholdBaseY !== 'undefined') ? strongholdBaseY : 0;
+            return (x >= 512 && x <= 528 &&
+                    z >= 922 && z <= 938 &&
+                    y >= baseY - 0.5 && y <= baseY + 13.0);
+        }
+
+        function updateStrongholdGuard(z, delta, now) {
+            z.mesh.visible = (isDimensionCave(z.inCave) === isDimensionCave(playerInCave));
+            
+            if (z.isDead) {
+                if (z.deathTime === undefined) z.deathTime = 0;
+                z.deathTime += delta;
+                
+                z.state = 'dead';
+                z.attackAnimProgress = Math.min(1.0, z.deathTime / 0.8);
+                z.mesh.rotation.x = 0;
+                z.mesh.position.y = (z.levelY !== undefined ? z.levelY : getTerrainHeight(z.mesh.position.x, z.mesh.position.z, z.inCave));
+                
+                animateStrongholdGuardMesh(z.mesh, 'dead', z.attackAnimProgress, delta, now);
+                return;
+            }
+            
+            // Apply knockback velocities
+            if (z.kx || z.kz) {
+                z.mesh.position.x += z.kx * delta;
+                z.mesh.position.z += z.kz * delta;
+                
+                z.kx -= z.kx * 4.5 * delta;
+                z.kz -= z.kz * 4.5 * delta;
+                if (Math.abs(z.kx) < 0.05) z.kx = 0;
+                if (Math.abs(z.kz) < 0.05) z.kz = 0;
+                
+                // Inside room boundaries constraint (only for upper levels)
+                if (z.levelY !== undefined && z.levelY > strongholdBaseY + 1.0) {
+                    z.mesh.position.x = Math.max(513.5, Math.min(526.5, z.mesh.position.x));
+                    z.mesh.position.z = Math.max(923.5, Math.min(936.5, z.mesh.position.z));
+                }
+            }
+            
+            const px = camera.position.x;
+            const pz = camera.position.z;
+            
+            let targetX = px;
+            let targetZ = pz;
+            let targetType = 'host';
+            let minDist = Infinity;
+            
+            const isJoseph = (myAppearance.name || '').toLowerCase().includes('joseph');
+            const canTargetHost = (playerInCave === !!z.inCave) && myHealth > 0 && (!inBush || isJoseph);
+            
+            const guardY = (z.levelY !== undefined) ? z.levelY : getTerrainHeight(z.mesh.position.x, z.mesh.position.z, z.inCave);
+            
+            if (canTargetHost) {
+                const py = camera.position.y - 1.6;
+                const distToPlayer = Math.sqrt(Math.pow(z.mesh.position.x - px, 2) + Math.pow(z.mesh.position.z - pz, 2));
+                // Only target player if they are on the same floor level (height difference < 2.0) and within 15 units
+                if (Math.abs(py - guardY) < 2.0 && distToPlayer <= 15.0) {
+                    minDist = distToPlayer;
+                }
+            }
+            
+            if (opponentGroup && oppHealth > 0 && isConnected && !opponentInvisible && (opponentInCave === !!z.inCave)) {
+                const ox = opponentGroup.position.x;
+                const oz = opponentGroup.position.z;
+                const oy = opponentGroup.position.y;
+                const distToClient = Math.sqrt(Math.pow(z.mesh.position.x - ox, 2) + Math.pow(z.mesh.position.z - oz, 2));
+                // Only target client player if they are on the same floor level and within 15 units
+                if (Math.abs(oy - guardY) < 2.0 && distToClient <= 15.0) {
+                    if (distToClient < minDist) {
+                        minDist = distToClient;
+                        targetX = ox;
+                        targetZ = oz;
+                        targetType = 'client';
+                    }
+                }
+            }
+            
+            let isWalking = false;
+            
+            // Check state updates
+            if (minDist === Infinity) {
+                // Return to guarding post
+                const distToPost = Math.sqrt(Math.pow(z.mesh.position.x - z.x, 2) + Math.pow(z.mesh.position.z - z.z, 2));
+                if (distToPost > 0.1) {
+                    const dxPost = z.x - z.mesh.position.x;
+                    const dzPost = z.z - z.mesh.position.z;
+                    const walkSpeed = 2.0; // slow walk back
+                    const vx = (dxPost / distToPost) * walkSpeed;
+                    const vz = (dzPost / distToPost) * walkSpeed;
+                    
+                    z.mesh.position.x += vx * delta;
+                    z.mesh.position.z += vz * delta;
+                    
+                    z.ry = Math.atan2(dxPost, dzPost);
+                    z.mesh.rotation.y = z.ry;
+                    
+                    z.state = 'standing';
+                    isWalking = true;
+                } else {
+                    // Already at post
+                    z.mesh.position.x = z.x;
+                    z.mesh.position.z = z.z;
+                    z.ry = 0;
+                    z.mesh.rotation.y = 0;
+                    z.state = 'standing';
+                    isWalking = false;
+                }
+                z.isAttacking = false;
+                z.attackAnimProgress = 0;
+            } else {
+                // Rotation Y updates when player is within range
+                if (minDist < 15.0) {
+                    z.ry = Math.atan2(targetX - z.mesh.position.x, targetZ - z.mesh.position.z);
+                    z.mesh.rotation.y = z.ry;
+                } else {
+                    z.ry = 0;
+                    z.mesh.rotation.y = 0;
+                }
+                
+                if (z.isAttacking) {
+                    z.attackAnimTime -= delta;
+                    z.attackAnimProgress = 1.0 - (z.attackAnimTime / 0.5);
+                    if (z.attackAnimTime <= 0) {
+                        z.isAttacking = false;
+                        z.attackAnimProgress = 0;
+                        z.state = minDist <= 5.0 ? 'crouching' : 'standing';
+                    }
+                } else if (z.state === 'charging') {
+                    // We are charging!
+                    if (z.chargeStartTime === undefined) z.chargeStartTime = now;
+                    const chargeElapsed = (now - z.chargeStartTime) / 1000; // seconds
+                    
+                    // First 0.6 seconds of charging is the switch spear-to-sword animation
+                    if (chargeElapsed < 0.6) {
+                        z.attackAnimProgress = chargeElapsed / 0.6; // 0 to 1
+                    } else {
+                        z.attackAnimProgress = 1.0; // finished switch
+                    }
+                    
+                    // Move towards target at high speed (charge!)
+                    const dx = targetX - z.mesh.position.x;
+                    const dz = targetZ - z.mesh.position.z;
+                    const dist = Math.sqrt(dx * dx + dz * dz);
+                    if (dist > 0.1) {
+                        const chargeSpeed = 6.5; // Fast charge!
+                        const vx = (dx / dist) * chargeSpeed;
+                        const vz = (dz / dist) * chargeSpeed;
+                        z.mesh.position.x += vx * delta;
+                        z.mesh.position.z += vz * delta;
+                        isWalking = true;
+                    }
+                    
+                    // Constraint to platform level
+                    if (z.levelY !== undefined && z.levelY > strongholdBaseY + 1.0) {
+                        z.mesh.position.x = Math.max(513.5, Math.min(526.5, z.mesh.position.x));
+                        z.mesh.position.z = Math.max(923.5, Math.min(936.5, z.mesh.position.z));
+                    }
+                    
+                    // If we get close, slash with sword!
+                    if (minDist <= 2.2) {
+                        z.state = 'slashing';
+                        z.isAttacking = true;
+                        z.attackAnimTime = 0.5;
+                        z.attackAnimProgress = 0;
+                        z.lastAttackTime = now;
+                        
+                        const kx = (targetX - z.mesh.position.x);
+                        const kz = (targetZ - z.mesh.position.z);
+                        const kLen = Math.sqrt(kx * kx + kz * kz);
+                        const force = 6.0;
+                        const kxNorm = kLen > 0 ? (kx / kLen) * force : 0;
+                        const kzNorm = kLen > 0 ? (kz / kLen) * force : 0;
+                        
+                        if (targetType === 'host') {
+                            takeDamage(10, kxNorm, kzNorm, "Killed by Stronghold Guard!");
+                        } else if (targetType === 'client') {
+                            sendNetworkMessage({
+                                type: 'zombie-hit',
+                                damage: 10,
+                                kx: kxNorm,
+                                kz: kzNorm
+                            });
+                        }
+                    } else if (minDist > 15.0 || chargeElapsed > 4.0) {
+                        // Timeout charge or target lost, switch back to spear
+                        z.state = minDist <= 5.0 ? 'crouching' : 'standing';
+                        z.attackAnimProgress = 0;
+                    }
+                } else {
+                    // Not attacking or charging
+                    if (minDist <= 4.0) {
+                        // Within spear range! Spear attack
+                        if (now - z.lastAttackTime > 1500) {
+                            z.lastAttackTime = now;
+                            z.state = 'jabbing';
+                            z.isAttacking = true;
+                            z.attackAnimTime = 0.5;
+                            z.attackAnimProgress = 0;
+                            
+                            const kx = (targetX - z.mesh.position.x);
+                            const kz = (targetZ - z.mesh.position.z);
+                            const kLen = Math.sqrt(kx * kx + kz * kz);
+                            const force = 8.0;
+                            const kxNorm = kLen > 0 ? (kx / kLen) * force : 0;
+                            const kzNorm = kLen > 0 ? (kz / kLen) * force : 0;
+                            
+                            if (targetType === 'host') {
+                                takeDamage(15, kxNorm, kzNorm, "Killed by Stronghold Guard!");
+                            } else if (targetType === 'client') {
+                                sendNetworkMessage({
+                                    type: 'zombie-hit',
+                                    damage: 15,
+                                    kx: kxNorm,
+                                    kz: kzNorm
+                                });
+                            }
+                        } else {
+                            z.state = 'crouching';
+                        }
+                    } else if (minDist <= 15.0) {
+                        // Player is further away but within 15 units. Check if we can trigger a charge
+                        if (z.lastChargeTime === undefined) z.lastChargeTime = 0;
+                        if (now - z.lastChargeTime > 4000) {
+                            // Start charging!
+                            z.state = 'charging';
+                            z.chargeStartTime = now;
+                            z.lastChargeTime = now;
+                            z.attackAnimProgress = 0;
+                        } else {
+                            // Cooldown active, walk slowly towards player with spear
+                            z.state = minDist <= 5.0 ? 'crouching' : 'standing';
+                            const dx = targetX - z.mesh.position.x;
+                            const dz = targetZ - z.mesh.position.z;
+                            const dist = Math.sqrt(dx * dx + dz * dz);
+                            if (dist > 3.0) {
+                                const walkSpeed = 2.0; // Normal walking speed
+                                const vx = (dx / dist) * walkSpeed;
+                                const vz = (dz / dist) * walkSpeed;
+                                z.mesh.position.x += vx * delta;
+                                z.mesh.position.z += vz * delta;
+                                isWalking = true;
+                            }
+                            
+                            if (z.levelY !== undefined && z.levelY > strongholdBaseY + 1.0) {
+                                z.mesh.position.x = Math.max(513.5, Math.min(526.5, z.mesh.position.x));
+                                z.mesh.position.z = Math.max(923.5, Math.min(936.5, z.mesh.position.z));
+                            }
+                        }
+                    } else {
+                        // No target, stand idle
+                        z.state = 'standing';
+                    }
+                }
+            }
+            
+            z.mesh.userData.isWalking = isWalking;
+            
+            // Set Y position based on platform height
+            z.mesh.position.y = (z.levelY !== undefined ? z.levelY : getTerrainHeight(z.mesh.position.x, z.mesh.position.z, z.inCave));
+            
+            animateStrongholdGuardMesh(z.mesh, z.state, z.attackAnimProgress || 0, delta, now);
+        }
+
         function updateZombies(delta) {
-            if (!isHost || !gameActive || myHealth <= 0) return;
+            if (!isHost || !gameActive) return;
             
             const now = Date.now();
+            const isJoseph = (myAppearance.name || '').toLowerCase().includes('joseph');
             
             for (let i = zombies.length - 1; i >= 0; i--) {
                 const z = zombies[i];
+                
+                if (z.type === 'stronghold_guard') {
+                    updateStrongholdGuard(z, delta, now);
+                    continue;
+                }
+                
+                if (z.type === 'house_mimic') {
+                    updateHouseMimic(z, delta, now);
+                    continue;
+                }
                 
                 if (z.type === 'crawling_tree' || z.type === 'mimic_mushroom') {
                     updateMimic(z, delta, now);
@@ -17327,7 +19683,7 @@ export function initNeonBruiser(): Cleanup {
                 let minDist = Infinity;
                 
                 const isZombieInCave = !!z.inCave;
-                const canTargetHost = (playerInCave === isZombieInCave) && myHealth > 0 && !inBush;
+                const canTargetHost = (playerInCave === isZombieInCave) && myHealth > 0 && (!inBush || isJoseph);
                 
                 if (canTargetHost) {
                     minDist = Math.sqrt(Math.pow(z.mesh.position.x - px, 2) + Math.pow(z.mesh.position.z - pz, 2));
@@ -17359,8 +19715,8 @@ export function initNeonBruiser(): Cleanup {
                     }
                 });
 
-                // Cap night mob detection range to 16 coordinates
-                if (minDist > 16.0) {
+                // Cap night mob detection range to 16 coordinates (40 if Joseph)
+                if (minDist > (isJoseph ? 40.0 : 16.0)) {
                     minDist = Infinity;
                 }
                 
@@ -17379,7 +19735,7 @@ export function initNeonBruiser(): Cleanup {
                         
                         if (elapsed >= 2.0) {
                             // Explode!
-                            createExplosionEffect(z.mesh.position.x, z.mesh.position.y, z.mesh.position.z, 4.5, 10, false);
+                            createExplosionEffect(z.mesh.position.x, z.mesh.position.y, z.mesh.position.z, 4.5, isJoseph ? 15 : 10, false);
                             
                             // Sync explosion to client
                             sendNetworkMessage({
@@ -17580,11 +19936,11 @@ export function initNeonBruiser(): Cleanup {
                     const kzNorm = kLen > 0 ? (kz/kLen)*force : 0;
                     
                     if (targetType === 'host') {
-                        takeDamage(9, kxNorm, kzNorm, "Killed by Zombie!");
+                        takeDamage(isJoseph ? 15 : 9, kxNorm, kzNorm, "Killed by Zombie!");
                     } else if (targetType === 'client') {
                         sendNetworkMessage({
                             type: 'zombie-hit',
-                            damage: 9,
+                            damage: isJoseph ? 15 : 9,
                             kx: kxNorm,
                             kz: kzNorm
                         });
@@ -18202,6 +20558,30 @@ export function initNeonBruiser(): Cleanup {
             }
         }
 
+        function handleMimicSettle(z) {
+            z.health = 50;
+            z.isDead = false;
+            z.deathTime = 0;
+            
+            z.startX = z.mesh.position.x;
+            z.startY = z.mesh.position.y;
+            z.startZ = z.mesh.position.z;
+            z.ry = 0;
+            z.mesh.rotation.set(0, 0, 0);
+            
+            z.state = 'settled';
+            z.stateTime = 0;
+            z.isWandering = false;
+            z.isFleeing = false;
+            z.attackAnimProgress = 0;
+            
+            const twoDaysMs = 2 * CYCLE_DURATION * 1000;
+            z.wakeUpTime = (Date.now() + timeOffset) + twoDaysMs;
+            
+            spawnDirtParticles(z.mesh.position, 24);
+            AudioSynth.playClack(z.mesh.position);
+        }
+
         function getFoodTypeForAnimal(type) {
             if (type === 'pig') return 'porkchop';
             if (type === 'cow') return 'beef';
@@ -18351,10 +20731,15 @@ export function initNeonBruiser(): Cleanup {
             if (!isHost || !gameActive) return;
             
             const now = Date.now();
+            const isJoseph = (myAppearance.name || '').toLowerCase().includes('joseph');
+            
+            if (isJoseph && myHealth > 0 && !localPlayerInvisible) {
+                beesAngryAt = 'host';
+            }
             
             // Check if target player health is low or they went invisible or died
             if (beesAngryAt === 'host') {
-                if (myHealth <= 15 || localPlayerInvisible || myHealth <= 0) {
+                if ((myHealth <= 15 || localPlayerInvisible || myHealth <= 0) && !isJoseph) {
                     beesAngryAt = null;
                 }
             } else if (beesAngryAt === 'client') {
@@ -18417,11 +20802,11 @@ export function initNeonBruiser(): Cleanup {
                     if (dist < 1.2 && (!b.lastAttackTime || now - b.lastAttackTime > 1200)) {
                         b.lastAttackTime = now;
                         if (beesAngryAt === 'host') {
-                            takeDamage(4, dir.x * 2.0, dir.z * 2.0, "Stung to death by Bees!");
+                            takeDamage(isJoseph ? 15 : 4, dir.x * 2.0, dir.z * 2.0, "Stung to death by Bees!");
                         } else {
                             sendNetworkMessage({
                                 type: 'bee-hit',
-                                damage: 4,
+                                damage: isJoseph ? 15 : 4,
                                 kx: dir.x * 2.0,
                                 kz: dir.z * 2.0
                             });
@@ -18551,6 +20936,39 @@ export function initNeonBruiser(): Cleanup {
                     v.kz -= v.kz * 4.5 * delta;
                     if (Math.abs(v.kx) < 0.05) v.kx = 0;
                     if (Math.abs(v.kz) < 0.05) v.kz = 0;
+                }
+                
+                const isJoseph = (myAppearance.name || '').toLowerCase().includes('joseph');
+                if (isJoseph && !v.isDead && myHealth > 0) {
+                    const px = camera.position.x;
+                    const pz = camera.position.z;
+                    const dx = px - v.mesh.position.x;
+                    const dz = pz - v.mesh.position.z;
+                    const dist = Math.sqrt(dx * dx + dz * dz);
+                    
+                    if (dist < 32.0) {
+                        const speed = v.speed * 2.0;
+                        const vx = (dx / dist) * speed;
+                        const vz = (dz / dist) * speed;
+                        v.mesh.position.x += vx * delta;
+                        v.mesh.position.z += vz * delta;
+                        v.mesh.position.y = getTerrainHeight(v.mesh.position.x, v.mesh.position.z, v.inCave);
+                        
+                        v.mesh.rotation.y = Math.atan2(dx, dz);
+                        
+                        const walkSpeed = 12;
+                        v.mesh.children[2].rotation.x = Math.sin(now * 0.01 * walkSpeed) * 0.5;
+                        v.mesh.children[3].rotation.x = -Math.sin(now * 0.01 * walkSpeed) * 0.5;
+                        
+                        if (dist < 1.6 && (!v.lastAttackTime || now - v.lastAttackTime > 1500)) {
+                            v.lastAttackTime = now;
+                            const force = 6.0;
+                            const kxNorm = dist > 0 ? (dx / dist) * force : 0;
+                            const kzNorm = dist > 0 ? (dz / dist) * force : 0;
+                            takeDamage(15, kxNorm, kzNorm, "Killed by Villager!");
+                        }
+                        return;
+                    }
                 }
                 
                 const vcx = v.villageCenterX !== undefined ? v.villageCenterX : -78;
@@ -18856,6 +21274,46 @@ export function initNeonBruiser(): Cleanup {
                     if (a.mesh.userData.legBR) a.mesh.userData.legBR.rotation.x = legAngle;
                     
                     continue;
+                }
+                
+                const isJoseph = (myAppearance.name || '').toLowerCase().includes('joseph');
+                if (isJoseph && !a.isDead && a.rider !== 'local' && myHealth > 0) {
+                    const px = camera.position.x;
+                    const pz = camera.position.z;
+                    const dx = px - a.mesh.position.x;
+                    const dz = pz - a.mesh.position.z;
+                    const dist = Math.sqrt(dx * dx + dz * dz);
+                    
+                    if (dist < 32.0) {
+                        const animalSpeed = a.speed * 2.0;
+                        const vx = (dx / dist) * animalSpeed;
+                        const vz = (dz / dist) * animalSpeed;
+                        a.mesh.position.x += vx * delta;
+                        a.mesh.position.z += vz * delta;
+                        a.mesh.position.y = getTerrainHeight(a.mesh.position.x, a.mesh.position.z);
+                        
+                        a.mesh.rotation.y = Math.atan2(dx, dz);
+                        
+                        const walkSpeed = 15;
+                        const legAngle = Math.sin(now * 0.01 * walkSpeed) * 0.5;
+                        if (a.mesh.userData.legFL) a.mesh.userData.legFL.rotation.x = legAngle;
+                        if (a.mesh.userData.legFR) a.mesh.userData.legFR.rotation.x = -legAngle;
+                        if (a.mesh.userData.legBL) a.mesh.userData.legBL.rotation.x = -legAngle;
+                        if (a.mesh.userData.legBR) a.mesh.userData.legBR.rotation.x = legAngle;
+                        
+                        if (dist < 1.6 && (!a.lastAttackTime || now - a.lastAttackTime > 1500)) {
+                            a.lastAttackTime = now;
+                            const force = 6.0;
+                            const kxNorm = dist > 0 ? (dx / dist) * force : 0;
+                            const kzNorm = dist > 0 ? (dz / dist) * force : 0;
+                            takeDamage(15, kxNorm, kzNorm, `Killed by ${a.type.charAt(0).toUpperCase() + a.type.slice(1)}!`);
+                        }
+                        
+                        a.x = a.mesh.position.x;
+                        a.y = a.mesh.position.y;
+                        a.z = a.mesh.position.z;
+                        continue;
+                    }
                 }
                 
                 // Apply knockback velocities
@@ -21090,8 +23548,10 @@ export function initNeonBruiser(): Cleanup {
 
     // Expose internal state and actions for testing
     if (typeof window !== 'undefined') {
-        (window as any).__gameTestAPI = {
+        const anyWindow = window as any;
+        anyWindow.__gameTestAPI = {
             // Getters/setters for internal state
+            get myAppearance() { return myAppearance; },
             get myHealth() { return myHealth; },
             set myHealth(v) { myHealth = v; },
             get hunger() { return hunger; },
@@ -21113,6 +23573,7 @@ export function initNeonBruiser(): Cleanup {
             get isLocked() { return isLocked; },
             set isLocked(v) { isLocked = v; },
             get zombies() { return zombies; },
+            get villagers() { return villagers; },
             get placedObjects() { return placedObjects; },
             get respawnPoint() { return respawnPoint; },
             set respawnPoint(v) { respawnPoint = v; },
@@ -21121,6 +23582,7 @@ export function initNeonBruiser(): Cleanup {
             get isGrounded() { return isGrounded; },
             set isGrounded(v) { isGrounded = v; },
             get camera() { return camera; },
+            triggerHouseMimicsAggro,
 
             // Internal functions
             takeDamage,
@@ -21138,6 +23600,9 @@ export function initNeonBruiser(): Cleanup {
             saveWorldsList,
             triggerNightCommand,
             triggerDayCommand,
+            handleNetworkMessage,
+            updateZombies,
+            clearZombies,
         };
     }
 
@@ -21167,6 +23632,7 @@ export function initNeonBruiser(): Cleanup {
         delete window.onChestInventoryClick;
         delete window.onChestSlotClick;
         delete window.closeChestUI;
-        delete (window as any).__gameTestAPI;
+        const anyWindow = window as any;
+        delete anyWindow.__gameTestAPI;
     };
 }
